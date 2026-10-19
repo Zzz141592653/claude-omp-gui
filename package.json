@@ -100,6 +100,7 @@
   "scripts": {
     "test": "node --test",
     "package": "vsce package",
+    "install:local": "VSIX=\"agent-sessions-$(node -p 'require(\"./package.json\").version').vsix\" && npm run package && /Applications/Cursor.app/Contents/Resources/app/bin/cursor --install-extension \"$VSIX\" --force && for d in ~/.cursor/extensions/*agent-sessions*; do [ -d \"$d\" ] && cp -f package.json extension.js sources.js review.js readme.md changelog.md \"$d/\" && cp -rf media/* \"$d/media/\"; done && rm -f \"$VSIX\"",
     "publish:ovsx": "npx ovsx publish -p \"${OVSX_PAT:-$(tr -d '[:space:]' < ~/open-vsx.token 2>/dev/null)}\""
   },
   "devDependencies": {

@@ -1,0 +1,86 @@
+name: CI & Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Test, Package & Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Package VSIX
+        run: npm run package
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-sessions-vsix
+          path: "*.vsix"
+          if-no-files-found: error
+
+      - name: Publish GitHub Release & Open VSX (on version bump or tag)
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          VSIX="agent-sessions-${VERSION}.vsix"
+
+          node -e '
+            const fs = require("fs");
+            const ver = process.argv[1];
+            const text = fs.existsSync("changelog.md") ? fs.readFileSync("changelog.md", "utf8") : "";
+            const re = new RegExp("^#\\s+" + ver.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\n([\\s\\S]*?)(?=^#\\s+|(?![\\s\\S]))", "m");
+            const m = text.match(re);
+            fs.writeFileSync("release-notes.md", (m && m[1].trim()) ? m[1].trim() + "\n" : "Release v" + ver + "\n");
+          ' "$VERSION"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [[ "${GITHUB_REF}" == refs/tags/* || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+              echo "Updating existing GitHub release $TAG with $VSIX..."
+              gh release upload "$TAG" "$VSIX" --clobber
+            else
+              echo "GitHub release $TAG already exists; skipping release creation."
+            fi
+          else
+            echo "Creating GitHub release $TAG..."
+            gh release create "$TAG" "$VSIX" --title "$TAG" --notes-file release-notes.md
+          fi
+
+          PUBLISHED_VER=$(curl -sf "https://open-vsx.org/api/jinxinyang/agent-sessions/${VERSION}" | jq -r '.version // empty' || true)
+          if [[ "$PUBLISHED_VER" == "$VERSION" ]]; then
+            echo "Open VSX already has version $VERSION; skipping Open VSX publish."
+          elif [[ -n "${OVSX_PAT}" ]]; then
+            echo "Publishing $VSIX to Open VSX..."
+            npx ovsx publish "$VSIX" -p "${OVSX_PAT}"
+          else
+            echo "::warning::OVSX_PAT secret is not configured; skipped Open VSX publish."
+          fi

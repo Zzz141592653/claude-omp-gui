@@ -3,6 +3,7 @@
 **/.DS_Store
 AGENTS.md
 .git/**
+.github/**
 .gitignore
 test/**
 docs/**
