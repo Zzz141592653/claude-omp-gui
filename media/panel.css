@@ -248,12 +248,37 @@ mark.hit.current { background: var(--vscode-editor-findMatchBackground, #f59e0b)
   padding: 18px 28px 12px;
   border-bottom: 1px solid var(--line);
 }
+.thread-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 .thread-head h2 {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   font-size: 16px;
   font-weight: 650;
   line-height: 1.35;
 }
+.resume-btn {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--soft);
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.resume-btn:hover {
+  background: color-mix(in srgb, var(--vscode-button-background, #0d9488) 18%, var(--soft));
+  border-color: color-mix(in srgb, var(--vscode-button-background, #0d9488) 45%, var(--line));
+}
+.resume-btn[hidden] { display: none; }
 .thread-head .meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .files {
   flex: none;

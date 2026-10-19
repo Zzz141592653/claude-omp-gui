@@ -2,6 +2,7 @@ const vscode = acquireVsCodeApi();
 const fileEl = document.getElementById("file");
 const sessionEl = document.getElementById("session");
 const sendEl = document.getElementById("send");
+const resumeEl = document.getElementById("resume");
 const diffEl = document.getElementById("diff");
 const noticeEl = document.getElementById("notice");
 const docEl = document.getElementById("doc");
@@ -42,6 +43,7 @@ window.addEventListener("message", (event) => {
   if (typeof vscode.setState === "function") vscode.setState({ fileName: state.fileName });
   noticeEl.textContent = state.notice;
   sendEl.disabled = !state.canSend;
+  if (resumeEl) resumeEl.hidden = !state.canResume;
   diffEl.disabled = !state.canDiff;
   reviewVersionId = state.versionId || "";
   const previousScroll = docEl.scrollTop;
@@ -85,6 +87,7 @@ window.addEventListener("message", (event) => {
   }
 });
 
+resumeEl?.addEventListener("click", () => vscode.postMessage({ type: "resume" }));
 sendEl.addEventListener("click", () => vscode.postMessage({ type: "send" }));
 diffEl.addEventListener("click", () => vscode.postMessage({ type: "diff" }));
 versionEl.addEventListener("change", () => vscode.postMessage({ type: "showVersion", id: versionEl.value }));

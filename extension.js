@@ -4,7 +4,7 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const vscode = require("vscode");
 const { listSessions, refreshSessionMeta, createTranscriptReader, readTranscript, snapshotTranscript, buildFileDiff, ompRoots, hasConversationEntries, hasClaudeProcess } = require("./sources");
-const { openReviewedFile, reviveReviewedFilePanel, liveTty, pasteIntoTerminal, noteInputFocus, selectAllInInput, focusFindInFileView } = require("./review");
+const { openReviewedFile, reviveReviewedFilePanel, liveTty, pasteIntoTerminal, resumeSessionInTerminal, noteInputFocus, selectAllInInput, focusFindInFileView } = require("./review");
 const { panelIsOpen, releaseClosedPanel, formatStatusText } = require("./panel-life");
 
 const SCAN_MS = 60_000;
@@ -126,6 +126,7 @@ function adoptLibraryPanel(context, targetPanel) {
     }
     if (message.type === "openLink") openLink(message.href);
     if (message.type === "reply") replyToSession(message.text);
+    if (message.type === "resumeSession") void resumeSession(message.key || openKey);
     if (message.type === "fileDiff") postFileDiff(message.path);
     if (message.type === "hide") hideSession(message.key);
     if (message.type === "unhide") unhideSession(message.key);
@@ -432,7 +433,7 @@ function replyState(session) {
   }
   const label = session.sourceLabel || (session.source === "claude" ? "Claude Code" : "OMP");
   if (!liveTty(session)) {
-    return { canReply: false, hint: `That ${label} window is not open. Open it in the terminal before replying.` };
+    return { canReply: false, hint: `That ${label} window is not open. Click "Resume in Terminal" to reopen it.` };
   }
   return { canReply: true, hint: `Reply here to send it to the open ${label} window. Press Enter to send.` };
 }
@@ -456,6 +457,32 @@ async function replyToSession(text) {
       ok: false,
       notice: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+async function resumeSession(key) {
+  const targetKey = String(key || openKey || "");
+  const session = sessions.find((item) => item.key === targetKey);
+  if (!session) return;
+  const label = session.sourceLabel || (session.source === "claude" ? "Claude Code" : "OMP");
+  try {
+    await resumeSessionInTerminal(session);
+    if (openKey !== session.key) openSession(session.key);
+    postedReply = "";
+    postReplyState();
+    setTimeout(() => postReplyState(), 1200);
+    setTimeout(() => postReplyState(), 3000);
+    if (panel && openKey === session.key) {
+      panel.webview.postMessage({ type: "replyResult", ok: true, notice: `Opened ${label} session in the integrated terminal.` });
+    }
+  } catch (error) {
+    if (panel) {
+      panel.webview.postMessage({
+        type: "replyResult",
+        ok: false,
+        notice: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
 
@@ -1234,7 +1261,10 @@ function htmlFor(context, webview) {
   </aside>
   <main class="main">
     <header class="thread-head">
-      <h2 id="title">Select a session</h2>
+      <div class="thread-title-row">
+        <h2 id="title">Select a session</h2>
+        <button id="thread-resume" class="resume-btn" type="button" hidden title="Resume or focus this session in the integrated terminal">Resume in Terminal</button>
+      </div>
       <div id="meta" class="meta"></div>
       <div class="find-row">
         <input id="find" type="search" placeholder="Search this session" />
@@ -1255,6 +1285,7 @@ function htmlFor(context, webview) {
       <textarea id="reply-text" rows="2" placeholder="Reply here to send it to the open terminal window"></textarea>
       <div class="reply-row">
         <span id="reply-notice">Select a session from the list.</span>
+        <button id="reply-resume" class="resume-btn" type="button" hidden title="Reopen this session in a Cursor integrated terminal">Resume in Terminal</button>
         <button id="reply-send" type="submit">Send</button>
       </div>
     </form>

@@ -17,7 +17,7 @@ Opening each one to see whether it answered is the slow part. The list marks the
 
 ![One session is still running, one has a new reply, and the reply shows the files it changed.](docs/images/library.png)
 
-The follow-up goes in the box at the bottom. When the OMP window is still open, Send pastes it there, so you can answer the session you are reading. Claude Code sessions can be read the same way. Mermaid diagrams, `svg` blocks, and numeric Markdown tables render inline with interactive full-screen zoom and pan. Under the reply, the files that turn changed are listed, and Diff opens the change in the panel before you answer.
+The follow-up goes in the box at the bottom. When the OMP or Claude Code window is still open, **Send** pastes it there, so you can answer the session you are reading; if the terminal was already closed, click **Resume in Terminal** to reopen that exact session (`omp -r` or `claude --resume`) in a Cursor integrated terminal inside its original project directory. Mermaid diagrams, `svg` blocks, and numeric Markdown tables render inline with interactive full-screen zoom and pan. Under the reply, the files that turn changed are listed, and Diff opens the change in the panel before you answer.
 
 **This workspace** keeps the list to the repo you have open. Sessions from other directories show up under **All workspaces**. A draggable mascot widget in the corner shows **Today** and **Month** spend for OMP and Claude Code with per-call `↑ +$0.xxx` floating toasts (right-click it to switch characters, pick a custom image, or minimize it).
 

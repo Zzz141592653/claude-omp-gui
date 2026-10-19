@@ -1,3 +1,10 @@
+# 1.5.6
+
+Since 1.5.5.
+
+- Add **Resume in Terminal** across the Session Library (thread header, reply bar, and session row actions) and the File Review panel so closed OMP (`omp -r <file>`) and Claude Code (`claude --resume <id>`) sessions can be reopened in a Cursor integrated terminal in their original working directory with one click.
+- Support replying and sending file review comments directly to Cursor integrated terminals (`vscode.window.terminals`) in addition to external macOS `Terminal.app` and `iTerm2` windows.
+
 # 1.5.5
 
 Since 1.5.4.

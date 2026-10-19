@@ -128,7 +128,7 @@ test("openReviewedFile creates FileView with search bar, focusFindInFileView, an
     await openReviewedFile(ctx, { file: mdFile, line: 1 }, null);
     await messageHandler({ type: "ready" });
     const stateMsg = postedMessages.find((m) => m.type === "state");
-    for (const id of ["file", "session", "notice", "doc", "comments", "version-row", "version", "send", "diff", "find", "find-count", "find-prev", "find-next", "menu", "popover", "diagram"]) {
+    for (const id of ["file", "session", "notice", "doc", "comments", "version-row", "version", "resume", "send", "diff", "find", "find-count", "find-prev", "find-next", "menu", "popover", "diagram"]) {
       assert.ok(webviewHtml.includes(`id="${id}"`), `Missing #${id} in FileView HTML`);
     }
     assert.ok(stateMsg?.html.includes("<strong>哥伦比娅（少女）</strong>"));
@@ -136,6 +136,91 @@ test("openReviewedFile creates FileView with search bar, focusFindInFileView, an
     assert.equal(focusFindInFileView(), true);
     assert.ok(postedMessages.some((m) => m.type === "focusFind"));
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  } finally {
+    Module._load = origLoad;
+  }
+});
+
+test("buildResumeCommand and resumeSessionInTerminal resume OMP and Claude Code sessions and wire integrated terminal replies", async () => {
+  const Module = require("module");
+  const createdTerminals = [];
+  const mockVscode = {
+    ViewColumn: { Active: 1 },
+    Uri: { file: (p) => ({ fsPath: p, toString: () => `file://${p}` }) },
+    RelativePattern: class {},
+    workspace: { createFileSystemWatcher: () => ({ onDidChange() {}, dispose() {} }) },
+    commands: { executeCommand: () => Promise.resolve() },
+    window: {
+      terminals: createdTerminals,
+      createTerminal: (opts) => {
+        const term = {
+          name: opts.name,
+          cwd: opts.cwd,
+          shown: false,
+          sent: [],
+          exitStatus: undefined,
+          processId: Promise.resolve(999999),
+          show(preserveFocus) { this.shown = true; this.preserveFocus = preserveFocus; },
+          sendText(text, addNewLine) { this.sent.push({ text, addNewLine }); },
+        };
+        createdTerminals.push(term);
+        return term;
+      },
+    },
+  };
+
+  const origLoad = Module._load;
+  Module._load = function (request, parent, isMain) {
+    if (request === "vscode") return mockVscode;
+    return origLoad.call(this, request, parent, isMain);
+  };
+  try {
+    delete require.cache[require.resolve("../review")];
+    const { buildResumeCommand, resumeSessionInTerminal, liveTty, pasteIntoTerminal } = require("../review");
+
+    const ompSession = {
+      key: "omp:/tmp/it's-a-session.jsonl",
+      source: "omp",
+      sourceLabel: "OMP",
+      title: "Fix table alignment",
+      cwd: __dirname,
+      filePath: "/tmp/it's-a-session.jsonl",
+    };
+    const claudeSession = {
+      key: "claude:/tmp/01a153f1-97db-772a-97d1-2b7d2f8c2919.jsonl",
+      source: "claude",
+      sourceLabel: "Claude Code",
+      title: "Investigate flaky test",
+      cwd: __dirname,
+      filePath: "/tmp/01a153f1-97db-772a-97d1-2b7d2f8c2919.jsonl",
+    };
+
+    assert.equal(buildResumeCommand(ompSession), "omp -r '/tmp/it'\\''s-a-session.jsonl'");
+    assert.equal(buildResumeCommand(claudeSession), "claude --resume '01a153f1-97db-772a-97d1-2b7d2f8c2919'");
+
+    const ompRes = await resumeSessionInTerminal(ompSession, mockVscode);
+    assert.equal(ompRes.reused, false);
+    assert.equal(ompRes.terminal.name, "OMP: Fix table alignment");
+    assert.equal(ompRes.terminal.cwd, __dirname);
+    assert.equal(ompRes.terminal.shown, true);
+    assert.deepEqual(ompRes.terminal.sent, [{ text: "omp -r '/tmp/it'\\''s-a-session.jsonl'", addNewLine: true }]);
+    assert.equal(liveTty(ompSession), `integrated:${ompSession.key}`);
+
+    const reusedRes = await resumeSessionInTerminal(ompSession, mockVscode);
+    assert.equal(reusedRes.reused, true);
+    assert.equal(createdTerminals.length, 1);
+
+    await pasteIntoTerminal(liveTty(ompSession), "Follow-up prompt from panel", mockVscode);
+    assert.equal(ompRes.terminal.sent.length, 2);
+    assert.deepEqual(ompRes.terminal.sent[1], { text: "Follow-up prompt from panel", addNewLine: true });
+
+    const claudeRes = await resumeSessionInTerminal(claudeSession, mockVscode);
+    assert.equal(claudeRes.reused, false);
+    assert.equal(claudeRes.terminal.name, "Claude Code: Investigate flaky test");
+    assert.deepEqual(claudeRes.terminal.sent, [{ text: "claude --resume '01a153f1-97db-772a-97d1-2b7d2f8c2919'", addNewLine: true }]);
+
+    ompRes.terminal.exitStatus = { code: 0 };
+    assert.equal(liveTty(ompSession), "");
   } finally {
     Module._load = origLoad;
   }

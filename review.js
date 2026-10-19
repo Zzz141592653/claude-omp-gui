@@ -16,6 +16,7 @@ const MAX_BYTES = 2_000_000;
 
 let view;
 let inputWebview = null;
+const resumedTerminals = new Map();
 
 function noteInputFocus(webview, focused) {
   if (focused) inputWebview = webview;
@@ -197,6 +198,17 @@ class FileView {
       return;
     }
     if (message.type === "send") await this.send();
+    if (message.type === "resume") {
+      if (!this.record.session) return;
+      try {
+        await resumeSessionInTerminal(this.record.session);
+        this.notice = "Resumed session in the integrated terminal.";
+      } catch (error) {
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      }
+      await this.post(false);
+      return;
+    }
   }
 
   onFileChanged() {
@@ -274,7 +286,7 @@ class FileView {
     if (versionId) notice = "Earlier review. These comments stay with that version.";
     else if (!notice) {
       if (!session) notice = "Open this file from a session before sending comments back to that turn.";
-      else if (!tty) notice = `The ${label} window is not open. Open it before sending comments there.`;
+      else if (!tty) notice = `The ${label} window is not open. Click "Resume in Terminal" or open it before sending comments there.`;
       else notice = `Comments go to the open ${label} window`;
     }
     const html = missingText
@@ -295,6 +307,7 @@ class FileView {
       versionId,
       sessionLabel: label,
       canSend: Boolean(!versionId && tty && this.record.current.comments.length),
+      canResume: Boolean(session && !tty && buildResumeCommand(session)),
       canDiff: Boolean(snapshotPath && fs.existsSync(snapshotPath)),
       notice,
       focusLine: jump ? this.focusLine : 0,
@@ -304,8 +317,16 @@ class FileView {
 
 function liveTty(session) {
   if (!session) return "";
-  if (session.source === "omp") return liveOmpTty(session);
-  if (session.source === "claude") return liveClaudeTty(session);
+  const tty =
+    session.source === "omp" ? liveOmpTty(session)
+      : session.source === "claude" ? liveClaudeTty(session)
+        : "";
+  if (tty) return tty;
+  if (session.key && resumedTerminals.has(session.key)) {
+    const term = resumedTerminals.get(session.key);
+    if (term && term.exitStatus === undefined) return `integrated:${session.key}`;
+    resumedTerminals.delete(session.key);
+  }
   return "";
 }
 
@@ -402,7 +423,96 @@ function isNewestSessionInDir(filePath) {
   return true;
 }
 
-function pasteIntoTerminal(tty, prompt) {
+function shellQuote(value) {
+  return `'${String(value || "").replace(/'/g, "'\\''")}'`;
+}
+
+function buildResumeCommand(session) {
+  if (!session || !session.filePath) return "";
+  if (session.source === "omp") {
+    return `omp -r ${shellQuote(session.filePath)}`;
+  }
+  if (session.source === "claude") {
+    const id = path.basename(String(session.filePath), ".jsonl");
+    if (!id) return "";
+    return `claude --resume ${shellQuote(id)}`;
+  }
+  return "";
+}
+
+async function findIntegratedTerminalByTty(tty, vscodeApi = vscode) {
+  const raw = String(tty || "");
+  if (!raw) return null;
+  if (raw.startsWith("integrated:")) {
+    const key = raw.slice("integrated:".length);
+    const term = resumedTerminals.get(key);
+    if (term && term.exitStatus === undefined) return term;
+    resumedTerminals.delete(key);
+    return null;
+  }
+  const terminals = vscodeApi?.window?.terminals;
+  if (!Array.isArray(terminals) || !terminals.length) return null;
+  const name = path.basename(raw);
+  let pids;
+  try {
+    const out = execFileSync("ps", ["-t", name, "-o", "pid="], { encoding: "utf8" });
+    pids = new Set(out.split("\n").map((line) => line.trim()).filter(Boolean));
+  } catch {
+    return null;
+  }
+  if (!pids.size) return null;
+  for (const term of terminals) {
+    if (term.exitStatus !== undefined) continue;
+    try {
+      const pid = await term.processId;
+      if (pid && pids.has(String(pid))) return term;
+    } catch {
+      // Ignore terminals whose processId cannot be resolved.
+    }
+  }
+  return null;
+}
+
+async function resumeSessionInTerminal(session, vscodeApi = vscode) {
+  const command = buildResumeCommand(session);
+  if (!command) throw new Error("Cannot resume this session in a terminal.");
+  if (session.key && resumedTerminals.has(session.key)) {
+    const existing = resumedTerminals.get(session.key);
+    if (existing && existing.exitStatus === undefined) {
+      existing.show(false);
+      return { terminal: existing, command, reused: true };
+    }
+    resumedTerminals.delete(session.key);
+  }
+  const activeTty = liveTty(session);
+  if (activeTty) {
+    const existing = await findIntegratedTerminalByTty(activeTty, vscodeApi);
+    if (existing) {
+      existing.show(false);
+      if (session.key) resumedTerminals.set(session.key, existing);
+      return { terminal: existing, command, reused: true };
+    }
+  }
+  const label = session.sourceLabel || (session.source === "claude" ? "Claude Code" : "OMP");
+  const shortTitle = String(session.title || "Session").replace(/\s+/g, " ").trim().slice(0, 32) || "Session";
+  const cwd = session.cwd && fs.existsSync(session.cwd) ? session.cwd : os.homedir();
+  const terminal = vscodeApi.window.createTerminal({
+    name: `${label}: ${shortTitle}`,
+    cwd,
+  });
+  if (session.key) resumedTerminals.set(session.key, terminal);
+  terminal.show(false);
+  terminal.sendText(command, true);
+  return { terminal, command, reused: false };
+}
+
+async function pasteIntoTerminal(tty, prompt, vscodeApi = vscode) {
+  const integrated = await findIntegratedTerminalByTty(tty, vscodeApi);
+  if (integrated) {
+    integrated.show(false);
+    integrated.sendText(prompt, true);
+    return;
+  }
   const host = terminalHost(tty);
   const promptPath = path.join(os.tmpdir(), `agent-sessions-prompt-${crypto.randomUUID()}.txt`);
   fs.writeFileSync(promptPath, prompt);
@@ -912,6 +1022,7 @@ ${katexCss}
     <button id="find-prev" type="button" title="Previous match (Shift+Enter)">Prev</button>
     <button id="find-next" type="button" title="Next match (Enter)">Next</button>
   </div>
+  <button id="resume" type="button" hidden>Resume in Terminal</button>
   <button id="send" type="button">Send to this turn</button>
   <button id="diff" type="button">View changes</button>
 </header>
@@ -956,4 +1067,4 @@ ${mermaid}
 </html>`;
 }
 
-module.exports = { openReviewedFile, reviveReviewedFilePanel, liveTty, hasOmpProcess, pasteIntoTerminal, noteInputFocus, selectAllInInput, focusFindInFileView };
+module.exports = { openReviewedFile, reviveReviewedFilePanel, liveTty, hasOmpProcess, pasteIntoTerminal, buildResumeCommand, resumeSessionInTerminal, noteInputFocus, selectAllInInput, focusFindInFileView };

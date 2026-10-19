@@ -53,6 +53,14 @@ const replyForm = document.querySelector("#reply");
 const replyText = document.querySelector("#reply-text");
 const replyNotice = document.querySelector("#reply-notice");
 const replySend = document.querySelector("#reply-send");
+const threadResume = document.querySelector("#thread-resume");
+const replyResume = document.querySelector("#reply-resume");
+threadResume?.addEventListener("click", () => {
+  if (state.selected) vscode.postMessage({ type: "resumeSession", key: state.selected });
+});
+replyResume?.addEventListener("click", () => {
+  if (state.selected) vscode.postMessage({ type: "resumeSession", key: state.selected });
+});
 const mascotDock = document.querySelector("#mascot-dock");
 const mascotMenu = document.querySelector("#mascot-menu");
 const diagramEl = document.querySelector("#diagram");
@@ -310,6 +318,15 @@ function sendReply() {
 
 function updateReply() {
   replySend.disabled = !state.canReply || state.replying || !replyText.value.trim();
+  const hasSession = Boolean(state.selected);
+  if (replyResume) replyResume.hidden = !hasSession || state.canReply;
+  if (threadResume) {
+    threadResume.hidden = !hasSession;
+    threadResume.textContent = state.canReply ? "Focus Terminal" : "Resume in Terminal";
+    threadResume.title = state.canReply
+      ? "Focus or open the terminal window for this session"
+      : "Reopen this session in a Cursor integrated terminal";
+  }
 }
 
 function setActive(selector, button) {
@@ -369,6 +386,7 @@ function sessionRow(session) {
   }
   main.addEventListener("click", () => openSessionRow(session));
   const actions = el("div", "session-actions");
+  actions.append(sessionAction("Resume", () => vscode.postMessage({ type: "resumeSession", key: session.key })));
   if (session.hidden) actions.append(sessionAction("Restore", () => vscode.postMessage({ type: "unhide", key: session.key })));
   else actions.append(sessionAction("Hide", () => vscode.postMessage({ type: "hide", key: session.key })));
   actions.append(sessionAction("Delete", () => vscode.postMessage({ type: "deleteSession", key: session.key })));
@@ -398,6 +416,7 @@ function openSessionRow(session) {
   metaEl.textContent = "Loading…";
   threadEl.replaceChildren(el("div", "empty", "Loading…"));
   updateJump();
+  updateReply();
   renderList();
   vscode.postMessage({ type: "open", key: session.key });
 }
