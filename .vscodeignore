@@ -2,6 +2,7 @@
 **/*.vsix
 **/.DS_Store
 AGENTS.md
+ROADMAP.md
 .git/**
 .github/**
 .gitignore
