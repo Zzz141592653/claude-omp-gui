@@ -71,3 +71,72 @@ test("sending closes the review and the next one starts empty", () => {
   assert.deepEqual(record.current.comments, []);
   assert.equal(closeRound(record, "draft"), false);
 });
+
+test("openReviewedFile creates FileView with search bar, focusFindInFileView, and renders Markdown + KaTeX", async () => {
+  const fs = require("fs");
+  const os = require("os");
+  const path = require("path");
+  const Module = require("module");
+
+  const postedMessages = [];
+  let messageHandler = null;
+  let webviewHtml = "";
+  const mockVscode = {
+    ViewColumn: { Active: 1 },
+    Uri: { file: (p) => ({ fsPath: p, toString: () => `file://${p}` }) },
+    RelativePattern: class {},
+    workspace: {
+      createFileSystemWatcher: () => ({ onDidChange() {}, dispose() {} }),
+    },
+    commands: { executeCommand: () => Promise.resolve() },
+    window: {
+      createWebviewPanel: () => {
+        const webview = {
+          cspSource: "vscode-webview-resource:",
+          asWebviewUri: (u) => u.toString(),
+          onDidReceiveMessage: (fn) => { messageHandler = fn; },
+          postMessage: (msg) => { postedMessages.push(msg); return Promise.resolve(true); },
+          get html() { return webviewHtml; },
+          set html(v) { webviewHtml = v; },
+        };
+        return {
+          title: "",
+          active: true,
+          reveal() {},
+          onDidDispose() {},
+          webview,
+        };
+      },
+    },
+  };
+
+  const origLoad = Module._load;
+  Module._load = function (request, parent, isMain) {
+    if (request === "vscode") return mockVscode;
+    return origLoad.call(this, request, parent, isMain);
+  };
+  try {
+    delete require.cache[require.resolve("../review")];
+    const { openReviewedFile, focusFindInFileView } = require("../review");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-sessions-review-"));
+    const mdFile = path.join(tmpDir, "note.md");
+    fs.writeFileSync(mdFile, "以**哥伦比娅（少女）**为核心：$\\frac{125\\%}{160\\%} = \\mathbf{78.125\\%}$\n");
+    const ctx = {
+      extensionPath: path.resolve(__dirname, ".."),
+      globalStorageUri: { fsPath: tmpDir },
+    };
+    await openReviewedFile(ctx, { file: mdFile, line: 1 }, null);
+    await messageHandler({ type: "ready" });
+    const stateMsg = postedMessages.find((m) => m.type === "state");
+    for (const id of ["file", "session", "notice", "doc", "comments", "version-row", "version", "send", "diff", "find", "find-count", "find-prev", "find-next", "menu", "popover", "diagram"]) {
+      assert.ok(webviewHtml.includes(`id="${id}"`), `Missing #${id} in FileView HTML`);
+    }
+    assert.ok(stateMsg?.html.includes("<strong>哥伦比娅（少女）</strong>"));
+    assert.ok(stateMsg?.html.includes("class=\"katex\""));
+    assert.equal(focusFindInFileView(), true);
+    assert.ok(postedMessages.some((m) => m.type === "focusFind"));
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } finally {
+    Module._load = origLoad;
+  }
+});

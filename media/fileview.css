@@ -44,6 +44,28 @@ header {
   white-space: nowrap;
   color: var(--vscode-descriptionForeground);
 }
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+#find {
+  width: 175px;
+  padding: 4px 8px;
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 5px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font: inherit;
+  font-size: 12px;
+}
+#find-count {
+  min-width: 3.8em;
+  text-align: right;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
 
 button {
   background: var(--vscode-button-secondaryBackground);
@@ -191,50 +213,10 @@ article {
   background: color-mix(in srgb, var(--vscode-foreground) 2%, transparent);
 }
 #doc pre.mermaid-error { outline: 1px solid var(--vscode-editorWarning-foreground); }
+#doc .katex { font-size: 1.04em; }
+#doc .katex-block, #doc .katex-display { margin: 0.55em 0; overflow-x: auto; overflow-y: hidden; }
 #doc .mermaid { position: relative; margin: 10px 0 18px; }
 #doc .mermaid svg { width: 100%; max-width: none; height: auto; display: block; }
-#doc .table-chart {
-  position: relative;
-  margin: -2px 0 16px;
-  padding: 12px 14px 10px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--vscode-foreground) 2%, transparent);
-}
-.table-chart-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-.table-chart-caption {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--vscode-foreground);
-}
-.table-chart-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.table-chart-tab {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--vscode-panel-border);
-  background: transparent;
-  color: var(--vscode-descriptionForeground);
-}
-.table-chart-tab.active {
-  color: #0d9488;
-  border-color: color-mix(in srgb, #0d9488 55%, var(--vscode-panel-border));
-  background: color-mix(in srgb, #0d9488 12%, transparent);
-  font-weight: 600;
-}
-.table-chart-stage { position: relative; }
-.table-chart-stage svg { width: 100%; max-width: 680px; height: auto; display: block; }
 .mermaid-zoom {
   position: absolute;
   top: 8px;
@@ -349,4 +331,12 @@ aside h2 { margin: 0 0 10px; font-size: 13px; }
 ::highlight(pending-comment) {
   background-color: var(--vscode-editor-selectionBackground);
   color: var(--vscode-editor-selectionForeground);
+}
+::highlight(file-find) {
+  background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 179, 8, 0.35));
+  color: inherit;
+}
+::highlight(file-find-current) {
+  background-color: var(--vscode-editor-findMatchBackground, rgba(245, 158, 11, 0.65));
+  color: inherit;
 }

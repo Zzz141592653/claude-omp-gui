@@ -12,11 +12,16 @@ const popover = document.getElementById("popover");
 const pendingQuote = document.getElementById("pending-quote");
 const menu = document.getElementById("menu");
 const bodyEl = document.getElementById("body");
+const findEl = document.getElementById("find");
+const findCountEl = document.getElementById("find-count");
+const findPrevEl = document.getElementById("find-prev");
+const findNextEl = document.getElementById("find-next");
 
 let pending = null;
 let reviewVersionId = "";
 let renderedFile = "";
 let renderedHtml = "";
+const findState = { query: "", matches: [], index: 0 };
 
 bindInputSelectAll();
 
@@ -27,9 +32,14 @@ window.addEventListener("message", (event) => {
     selectFocusedField();
     return;
   }
+  if (state.type === "focusFind") {
+    focusFindField();
+    return;
+  }
   if (state.type !== "state") return;
   fileEl.textContent = state.fileName;
   sessionEl.textContent = state.sessionLabel;
+  if (typeof vscode.setState === "function") vscode.setState({ fileName: state.fileName });
   noticeEl.textContent = state.notice;
   sendEl.disabled = !state.canSend;
   diffEl.disabled = !state.canDiff;
@@ -54,6 +64,7 @@ window.addEventListener("message", (event) => {
   const placed = highlight(docEl, state.comments);
   if (!sameHtml) renderDiagrams(docEl);
   renderComments(state.comments, placed);
+  runFileFind(false);
   renderVersions(state);
   if (kept) {
     pending = kept;
@@ -77,6 +88,29 @@ window.addEventListener("message", (event) => {
 sendEl.addEventListener("click", () => vscode.postMessage({ type: "send" }));
 diffEl.addEventListener("click", () => vscode.postMessage({ type: "diff" }));
 versionEl.addEventListener("change", () => vscode.postMessage({ type: "showVersion", id: versionEl.value }));
+findEl?.addEventListener("input", () => {
+  findState.query = findEl.value;
+  findState.index = 0;
+  runFileFind(true);
+});
+findEl?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    stepFileFind(event.shiftKey ? -1 : 1);
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (findEl.value) {
+      findEl.value = "";
+      findState.query = "";
+      findState.index = 0;
+      runFileFind(false);
+    }
+    findEl.blur();
+  }
+});
+findPrevEl?.addEventListener("click", () => stepFileFind(-1));
+findNextEl?.addEventListener("click", () => stepFileFind(1));
 document.getElementById("cancel").addEventListener("click", hidePopover);
 document.getElementById("save").addEventListener("click", save);
 document.getElementById("menu-comment").addEventListener("click", () => {
@@ -152,11 +186,88 @@ function bindInputSelectAll() {
     }, 0);
   });
   window.addEventListener("keydown", (event) => {
-    if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "a") return;
+    if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+    const key = event.key.toLowerCase();
+    if (key === "f") {
+      event.preventDefault();
+      focusFindField();
+      return;
+    }
+    if (key !== "a") return;
     if (!isTextField(event.target)) return;
     event.preventDefault();
     event.target.select();
   }, true);
+}
+
+function focusFindField() {
+  if (!findEl) return;
+  findEl.focus();
+  findEl.select();
+}
+
+function runFileFind(reveal) {
+  findState.matches = [];
+  if (findCountEl) findCountEl.textContent = "";
+  if (window.CSS && CSS.highlights) {
+    CSS.highlights.delete("file-find");
+    CSS.highlights.delete("file-find-current");
+  }
+  const needle = String(findState.query || "").trim().toLowerCase();
+  if (!needle) return;
+  let fullText = "";
+  eachAnchorText([docEl], (node) => {
+    fullText += node.nodeValue || "";
+  });
+  const hay = fullText.toLowerCase();
+  let from = 0;
+  while (from <= hay.length - needle.length) {
+    const at = hay.indexOf(needle, from);
+    if (at < 0) break;
+    findState.matches.push({ from: at, to: at + needle.length });
+    from = at + needle.length;
+  }
+  if (!findState.matches.length) {
+    if (findCountEl) findCountEl.textContent = "No matches";
+    return;
+  }
+  if (findState.index >= findState.matches.length) findState.index = 0;
+  if (findState.index < 0) findState.index = findState.matches.length - 1;
+  paintFileFind(reveal);
+}
+
+function stepFileFind(delta) {
+  if (!findState.matches.length) {
+    if (findEl?.value) runFileFind(true);
+    return;
+  }
+  findState.index = (findState.index + delta + findState.matches.length) % findState.matches.length;
+  paintFileFind(true);
+}
+
+function paintFileFind(reveal) {
+  const total = findState.matches.length;
+  if (!total) return;
+  if (findCountEl) findCountEl.textContent = `${findState.index + 1}/${total}`;
+  const allRanges = [];
+  let currentRanges = [];
+  findState.matches.forEach((m, idx) => {
+    const r = rangesForOffsets([docEl], m.from, m.to);
+    allRanges.push(...r);
+    if (idx === findState.index) currentRanges = r;
+  });
+  if (window.CSS && CSS.highlights && typeof Highlight === "function") {
+    if (allRanges.length) CSS.highlights.set("file-find", new Highlight(...allRanges));
+    if (currentRanges.length) CSS.highlights.set("file-find-current", new Highlight(...currentRanges));
+  }
+  if (reveal && currentRanges.length) {
+    const rect = currentRanges[0].getBoundingClientRect();
+    const container = docEl.closest("article") || docEl;
+    const hostRect = container.getBoundingClientRect();
+    if (rect.width || rect.height) {
+      container.scrollTop += (rect.top - hostRect.top) - hostRect.height / 2 + rect.height / 2;
+    }
+  }
 }
 
 function isTextField(node) {
@@ -426,7 +537,7 @@ function paintLegacy(root, comment) {
 
 function anchorable(node) {
   const el = node.parentElement;
-  return Boolean(el && docEl.contains(node) && !el.closest("button, .ln, .mermaid, .table-chart, script, style, code.language-mermaid, code.language-svg"));
+  return Boolean(el && docEl.contains(node) && !el.closest("button, .ln, .mermaid, script, style, code.language-mermaid, code.language-svg"));
 }
 
 function firstAnchorText(root) {
@@ -615,7 +726,6 @@ function renderSvgBlocks(root) {
 
 function renderDiagrams(root) {
   renderSvgBlocks(root);
-  renderTableCharts(root);
   const token = ++diagramToken;
   if (!window.mermaid) return;
   const blocks = [...root.querySelectorAll("pre > code.language-mermaid")];
@@ -770,151 +880,6 @@ function closeDiagram() {
   diagramView.drag = null;
   diagramStage.classList.remove("dragging");
   diagramStage.replaceChildren();
-}
-
-let chartSeq = 0;
-
-function shortCategoryLabel(raw) {
-  const base = String(raw || "").replace(/\s*[（(].*$/, "").trim() || String(raw || "").trim();
-  return base.length > 18 ? `${base.slice(0, 16)}…` : base;
-}
-
-function parseMetricCell(cellEl) {
-  if (!cellEl || cellEl.querySelector("br")) return null;
-  const raw = (cellEl.textContent || "").trim();
-  const stripped = raw.replace(/\s*[（(][^）)]*[）)]\s*$/g, "").trim();
-  const match = /^([+-]?\d[\d,]*(?:\.\d+)?)\s*([%a-zA-Z\u4e00-\u9fa5/]{0,6})$/.exec(stripped);
-  if (!match) return null;
-  const value = Number(match[1].replace(/,/g, ""));
-  if (!Number.isFinite(value) || value < 0) return null;
-  const unit = match[2] ? (match[1].length + match[2].length === stripped.length ? match[2] : ` ${match[2]}`) : "";
-  return { value, unit, display: stripped };
-}
-
-function extractTableSeries(table) {
-  const allRows = [...table.querySelectorAll("tr")];
-  if (allRows.length < 4 || allRows.length > 25) return null;
-  const headers = [...allRows[0].querySelectorAll("th, td")].map((c) => (c.textContent || "").trim());
-  const bodyRows = allRows.slice(1).filter((tr) => tr.querySelector("td"));
-  if (headers.length < 2 || bodyRows.length < 3) return null;
-  const labels = bodyRows.map((tr) => shortCategoryLabel(tr.querySelector("td")?.textContent || ""));
-  const series = [];
-  for (let col = 1; col < headers.length; col += 1) {
-    const points = [];
-    let ok = true;
-    for (let r = 0; r < bodyRows.length; r += 1) {
-      const cells = bodyRows[r].querySelectorAll("td");
-      const parsed = parseMetricCell(cells[col]);
-      if (!parsed) {
-        ok = false;
-        break;
-      }
-      points.push({ label: labels[r], ...parsed });
-    }
-    if (!ok) continue;
-    const vals = points.map((p) => p.value);
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    if (!(max > min)) continue;
-    const title = headers[col].replace(/\s*[（(].*$/, "").trim() || headers[col];
-    series.push({ title, unit: points[0].unit, points, max });
-  }
-  return series.length ? series : null;
-}
-
-function renderTableCharts(root) {
-  const tables = [...root.querySelectorAll("table")];
-  for (const table of tables) {
-    if (table.dataset.chartRendered === "1") continue;
-    table.dataset.chartRendered = "1";
-    const seriesList = extractTableSeries(table);
-    if (!seriesList) continue;
-    const box = document.createElement("div");
-    box.className = "table-chart";
-    const head = document.createElement("div");
-    head.className = "table-chart-head";
-    const caption = document.createElement("div");
-    caption.className = "table-chart-caption";
-    head.appendChild(caption);
-    const stage = document.createElement("div");
-    stage.className = "table-chart-stage";
-    const selectSeries = (idx) => {
-      const s = seriesList[idx] || seriesList[0];
-      let peak = s.points[0];
-      for (const p of s.points) if (p.value > peak.value) peak = p;
-      caption.textContent = `${s.title} peaked at ${peak.display} in ${peak.label}`;
-      stage.innerHTML = buildTableChartSvg(s, ++chartSeq);
-    };
-    if (seriesList.length > 1) {
-      const tabs = document.createElement("div");
-      tabs.className = "table-chart-tabs";
-      seriesList.forEach((s, idx) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = `table-chart-tab${idx === 0 ? " active" : ""}`;
-        btn.textContent = s.title;
-        btn.addEventListener("click", () => {
-          [...tabs.children].forEach((c, i) => c.classList.toggle("active", i === idx));
-          selectSeries(idx);
-        });
-        tabs.appendChild(btn);
-      });
-      head.appendChild(tabs);
-    }
-    selectSeries(0);
-    attachZoomButton(box, () => stage.querySelector("svg"));
-    box.append(head, stage);
-    table.after(box);
-  }
-}
-
-function formatAxisTick(val, unit) {
-  if (val === 0) return `0${unit.trim()}`;
-  const num = val >= 100 ? Math.round(val).toLocaleString("en-US") : Number(val.toPrecision(3));
-  return `${num}${unit}`;
-}
-
-function buildTableChartSvg(series, seq) {
-  const W = 580;
-  const H = 195;
-  const padL = 56;
-  const padR = 54;
-  const padT = 26;
-  const padB = 30;
-  const plotW = W - padL - padR;
-  const plotH = H - padT - padB;
-  const topVal = (series.max || 1) * 1.1;
-  const pts = series.points.map((p, i) => {
-    const x = padL + (series.points.length === 1 ? plotW / 2 : (i / (series.points.length - 1)) * plotW);
-    const y = padT + plotH - (p.value / topVal) * plotH;
-    return { x, y, ...p };
-  });
-  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
-  for (let i = 0; i < pts.length - 1; i += 1) {
-    const p0 = pts[i];
-    const p1 = pts[i + 1];
-    const cx = ((p0.x + p1.x) / 2).toFixed(1);
-    d += ` C ${cx} ${p0.y.toFixed(1)}, ${cx} ${p1.y.toFixed(1)}, ${p1.x.toFixed(1)} ${p1.y.toFixed(1)}`;
-  }
-  const areaD = `${d} L ${pts[pts.length - 1].x.toFixed(1)} ${(padT + plotH).toFixed(1)} L ${pts[0].x.toFixed(1)} ${(padT + plotH).toFixed(1)} Z`;
-  let peakIdx = 0;
-  for (let i = 1; i < pts.length; i += 1) if (pts[i].value > pts[peakIdx].value) peakIdx = i;
-  const grids = [];
-  for (let g = 0; g <= 4; g += 1) {
-    const ratio = g / 4;
-    const y = (padT + plotH - ratio * plotH).toFixed(1);
-    const label = formatAxisTick(topVal * ratio, series.unit);
-    grids.push(`<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="currentColor" stroke-opacity="0.12" stroke-width="1"/>`);
-    grids.push(`<text x="${padL - 8}" y="${(Number(y) + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" fill-opacity="0.55">${label}</text>`);
-  }
-  const xLabels = pts.map((p) => `<text x="${p.x.toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.65">${p.label}</text>`).join("");
-  const dots = pts.map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="#0d9488"/>`).join("");
-  const peak = pts[peakIdx];
-  const peakCallout = `<line x1="${peak.x.toFixed(1)}" y1="${(peak.y - 4).toFixed(1)}" x2="${peak.x.toFixed(1)}" y2="${(peak.y - 12).toFixed(1)}" stroke="currentColor" stroke-opacity="0.45" stroke-width="1"/><text x="${peak.x.toFixed(1)}" y="${(peak.y - 15).toFixed(1)}" text-anchor="middle" font-size="10.5" font-weight="700" fill="currentColor">peak ${peak.display}</text>`;
-  const last = pts[pts.length - 1];
-  const endLabel = peakIdx === pts.length - 1 ? "" : `<text x="${(last.x + 7).toFixed(1)}" y="${(last.y + 3.5).toFixed(1)}" text-anchor="start" font-size="10.5" font-weight="700" fill="#0d9488">${last.display}</text>`;
-  const gradId = `tcGrad_${seq}`;
-  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0d9488" stop-opacity="0.24"/><stop offset="100%" stop-color="#0d9488" stop-opacity="0.01"/></linearGradient></defs>${grids.join("")}<path d="${areaD}" fill="url(#${gradId})"/><path d="${d}" fill="none" stroke="#0d9488" stroke-width="2" stroke-linecap="round"/>${dots}${peakCallout}${endLabel}${xLabels}</svg>`;
 }
 
 function blockOf(node) {

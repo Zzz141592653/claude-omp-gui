@@ -123,9 +123,13 @@ for (const button of document.querySelectorAll("[data-activity]")) {
 
 window.addEventListener("message", (event) => {
   const message = event.data;
-  if (!message) return;
   if (message.type === "selectAll") {
     selectFocusedField();
+    return;
+  }
+  if (message.type === "focusFind") {
+    findEl?.focus();
+    findEl?.select();
     return;
   }
   if (message.type === "mascotState") {
@@ -134,6 +138,7 @@ window.addEventListener("message", (event) => {
   }
   if (message.type === "sessions") {
     state.sessions = message.sessions;
+    if (typeof vscode.setState === "function") vscode.setState({ selected: state.selected });
     renderList();
     if (state.speedsOpen) renderSpeedsModal();
     return;
@@ -146,8 +151,8 @@ window.addEventListener("message", (event) => {
       renderDiff();
     }
     state.selected = message.key;
+    if (typeof vscode.setState === "function") vscode.setState({ selected: state.selected });
     state.transcript = message.transcript;
-    if (message.transcript?.stats) syncSessionStats(message.key, message.transcript.stats);
     if (message.following != null) state.following = message.following === true;
     if (message.canReply != null) state.canReply = message.canReply === true;
     if (message.replyHint) replyNotice.textContent = message.replyHint;
@@ -961,239 +966,320 @@ function renderTool(tool) {
   return details;
 }
 
-function renderMarkdown(parent, text) {
-  const chunks = String(text).split(/```/);
-  for (let index = 0; index < chunks.length; index += 1) {
-    const chunk = chunks[index];
-    if (index % 2 === 1) {
-      const firstNl = chunk.indexOf("\n");
-      const lang = (firstNl >= 0 ? chunk.slice(0, firstNl) : "").trim().split(/\s+/)[0].toLowerCase();
-      const body = (firstNl >= 0 ? chunk.slice(firstNl + 1) : chunk).replace(/\n$/, "");
-      if (lang === "mermaid" || lang === "svg") {
-        const pre = el("pre");
-        const code = el("code", `language-${lang}`, body);
-        pre.append(code);
-        parent.append(pre);
-      } else {
-        parent.append(richPre(body));
-      }
-      continue;
-    }
-    renderProse(parent, chunk);
+let mdEngine = null;
+
+function isMathWhitespace(char) {
+  return char !== undefined && /^\s$/u.test(char);
+}
+
+function isMathWordOrNumber(char) {
+  return char !== undefined && /^[\w\d]$/u.test(char);
+}
+
+function isValidInlineMathDelim(state, pos) {
+  const prevChar = state.src[pos - 1];
+  const char = state.src[pos];
+  const nextChar = state.src[pos + 1];
+  if (char !== "$") return { can_open: false, can_close: false };
+  const canOpen = prevChar !== "$" && prevChar !== "\\" && nextChar !== undefined && !isMathWhitespace(nextChar) && (prevChar === undefined || isMathWhitespace(prevChar) || !isMathWordOrNumber(prevChar));
+  const canClose = nextChar !== "$" && prevChar !== undefined && !isMathWhitespace(prevChar) && (nextChar === undefined || isMathWhitespace(nextChar) || !isMathWordOrNumber(nextChar));
+  return { can_open: canOpen, can_close: canClose };
+}
+
+function isValidBlockMathDelim(state, pos) {
+  const prevChar = state.src[pos - 1];
+  const char = state.src[pos];
+  const nextChar = state.src[pos + 1];
+  const nextCharPlus1 = state.src[pos + 2];
+  if (char === "$" && prevChar !== "$" && prevChar !== "\\" && nextChar === "$" && nextCharPlus1 !== "$") {
+    return { can_open: true, can_close: true };
   }
+  return { can_open: false, can_close: false };
 }
 
-function renderProse(parent, text) {
-  const lines = text.replace(/\n+$/, "").split("\n");
-  let index = 0;
-  while (index < lines.length) {
-    if (!lines[index].trim()) {
-      index += 1;
-      continue;
+function parseInlineMath(state, silent) {
+  if (state.src.startsWith("\\(", state.pos)) {
+    const start = state.pos + 2;
+    const match = state.src.indexOf("\\)", start);
+    if (match === -1) return false;
+    if (!silent && match > start) {
+      const token = state.push("math_inline", "math", 0);
+      token.markup = "\\(";
+      token.content = state.src.slice(start, match);
     }
-    if (isHrLine(lines[index])) {
-      parent.append(el("hr"));
-      index += 1;
-      continue;
-    }
-    const heading = /^\s*(#{1,6})\s+(.*)$/.exec(lines[index]);
-    if (heading) {
-      const level = heading[1].length;
-      const node = el(level <= 2 ? "h2" : level === 3 ? "h3" : "h4");
-      appendInline(node, heading[2]);
-      parent.append(node);
-      index += 1;
-      continue;
-    }
-    if (isTableStart(lines, index)) {
-      index = renderTable(parent, lines, index);
-      continue;
-    }
-    if (isQuoteLine(lines[index])) {
-      const quote = el("blockquote");
-      const body = [];
-      while (index < lines.length && isQuoteLine(lines[index])) {
-        body.push(lines[index].replace(/^\s{0,3}>\s?/, ""));
-        index += 1;
-      }
-      renderProse(quote, body.join("\n"));
-      parent.append(quote);
-      continue;
-    }
-    if (parseListMarker(lines[index])) {
-      index = renderMdList(parent, lines, index, false);
-      continue;
-    }
-    const paragraph = [];
-    while (
-      index < lines.length &&
-      lines[index].trim() &&
-      !isHrLine(lines[index]) &&
-      !/^\s*(#{1,6})\s+/.test(lines[index]) &&
-      !parseListMarker(lines[index]) &&
-      !isTableStart(lines, index) &&
-      !isQuoteLine(lines[index])
-    ) {
-      paragraph.push(lines[index]);
-      index += 1;
-    }
-    const node = el("p");
-    paragraph.forEach((line, lineIndex) => {
-      if (lineIndex > 0) node.append(document.createElement("br"));
-      appendInline(node, line);
-    });
-    parent.append(node);
+    state.pos = match + 2;
+    return true;
   }
-}
-
-function isHrLine(line) {
-  return /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line);
-}
-
-function parseListMarker(line) {
-  if (isHrLine(line)) return null;
-  const bullet = /^(\s*)([-*+])\s+(.*)$/.exec(line);
-  if (bullet) return { indent: bullet[1].length, type: "ul", num: null, text: bullet[3] };
-  const ordered = /^(\s*)(\d+)\.\s+(.*)$/.exec(line);
-  if (ordered) return { indent: ordered[1].length, type: "ol", num: Number(ordered[2]), text: ordered[3] };
-  return null;
-}
-
-function isSpecialBlockLine(lines, idx) {
-  const line = lines[idx];
-  return isHrLine(line) || /^\s*(#{1,6})\s+/.test(line) || isTableStart(lines, idx);
-}
-
-function renderMdList(parent, lines, startIndex, isSub) {
-  const first = parseListMarker(lines[startIndex]);
-  if (!first) return startIndex + 1;
-  const baseIndent = first.indent;
-  const listType = first.type;
-  const list = el(listType, isSub ? "md-list sub-list" : "md-list");
-  if (listType === "ol" && first.num > 1) list.start = first.num;
-  let index = startIndex;
-  while (index < lines.length) {
-    let look = index;
-    while (look < lines.length && !lines[look].trim()) look += 1;
-    if (look >= lines.length) break;
-    const m = parseListMarker(lines[look]);
-    if (!m || m.type !== listType || Math.abs(m.indent - baseIndent) > 1) break;
-    index = look + 1;
-    const item = el("li");
-    if (listType === "ol" && Number.isFinite(m.num)) item.value = m.num;
-    appendInline(item, m.text);
-    let lastText = m.text.trim();
-    let afterBlock = false;
-    while (index < lines.length) {
-      let nextIdx = index;
-      while (nextIdx < lines.length && !lines[nextIdx].trim()) nextIdx += 1;
-      if (nextIdx >= lines.length) break;
-      const cm = parseListMarker(lines[nextIdx]);
-      if (cm) {
-        if (cm.indent > baseIndent + 1) {
-          index = renderMdList(item, lines, nextIdx, true);
-          afterBlock = true;
-          continue;
-        }
-        break;
-      }
-      const qm = /^(\s*)>\s?(.*)$/.exec(lines[nextIdx]);
-      if (qm) {
-        if (qm[1].length > baseIndent + 1) {
-          const quote = el("blockquote");
-          const qLines = [];
-          while (nextIdx < lines.length) {
-            const ql = /^(\s*)>\s?(.*)$/.exec(lines[nextIdx]);
-            if (!ql || ql[1].length <= baseIndent + 1) break;
-            qLines.push(ql[2]);
-            nextIdx += 1;
-          }
-          renderProse(quote, qLines.join("\n"));
-          item.append(quote);
-          afterBlock = true;
-          index = nextIdx;
-          continue;
-        }
-        break;
-      }
-      const indent = (lines[nextIdx].match(/^\s*/) || [""])[0].length;
-      if (indent > baseIndent + 1 && !isSpecialBlockLine(lines, nextIdx)) {
-        const cont = lines[nextIdx].trim();
-        if (afterBlock) {
-          const p = el("div");
-          appendInline(p, cont);
-          item.append(p);
-          afterBlock = false;
-        } else {
-          if (/[:：]$/.test(lastText)) item.append(document.createElement("br"));
-          else item.append(document.createTextNode(" "));
-          appendInline(item, cont);
-        }
-        lastText = cont;
-        index = nextIdx + 1;
-        continue;
-      }
+  if (state.src.startsWith("\\[", state.pos)) {
+    const start = state.pos + 2;
+    const match = state.src.indexOf("\\]", start);
+    if (match === -1) return false;
+    if (!silent && match > start) {
+      const token = state.push("math_block", "math", 0);
+      token.block = true;
+      token.markup = "\\[";
+      token.content = state.src.slice(start, match);
+    }
+    state.pos = match + 2;
+    return true;
+  }
+  if (state.src[state.pos] !== "$") return false;
+  let res = isValidInlineMathDelim(state, state.pos);
+  if (!res.can_open) {
+    if (!silent) state.pending += "$";
+    state.pos += 1;
+    return true;
+  }
+  const start = state.pos + 1;
+  let match = start;
+  while ((match = state.src.indexOf("$", match)) !== -1) {
+    if (state.src.indexOf("\n", start) !== -1 && state.src.indexOf("\n", start) < match) {
+      match = -1;
       break;
     }
-    list.append(item);
+    let pos = match - 1;
+    while (state.src[pos] === "\\") pos -= 1;
+    if ((match - pos) % 2 === 1) break;
+    match += 1;
   }
-  parent.append(list);
-  return index;
-}
-
-function isQuoteLine(line) {
-  return /^\s{0,3}>\s?/.test(line);
-}
-
-function isTableStart(lines, index) {
-  return lines[index].includes("|") && index + 1 < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[index + 1]);
-}
-
-function renderTable(parent, lines, index) {
-  const table = el("table");
-  const head = el("tr");
-  const rawHeader = splitRow(lines[index]);
-  for (const cell of rawHeader) {
-    const th = el("th");
-    appendInline(th, cell);
-    head.append(th);
+  if (match === -1) {
+    if (!silent) state.pending += "$";
+    state.pos = start;
+    return true;
   }
-  table.append(head);
-  index += 2;
-  let rows = 0;
-  const rawRows = [];
-  while (index < lines.length && lines[index].includes("|") && rows < 250) {
-    if (/^\s*\|?\s*:?-{3,}/.test(lines[index])) {
-      index += 1;
-      continue;
+  if (match - start === 0) {
+    if (!silent) state.pending += "$$";
+    state.pos = start + 1;
+    return true;
+  }
+  res = isValidInlineMathDelim(state, match);
+  if (!res.can_close) {
+    if (!silent) state.pending += "$";
+    state.pos = start;
+    return true;
+  }
+  if (!silent) {
+    const token = state.push("math_inline", "math", 0);
+    token.markup = "$";
+    token.content = state.src.slice(start, match);
+  }
+  state.pos = match + 1;
+  return true;
+}
+
+function parseInlineMathBlock(state, silent) {
+  if (state.src.slice(state.pos, state.pos + 2) !== "$$") return false;
+  let res = isValidBlockMathDelim(state, state.pos);
+  if (!res.can_open) {
+    if (!silent) state.pending += "$$";
+    state.pos += 2;
+    return true;
+  }
+  const start = state.pos + 2;
+  let match = start;
+  while ((match = state.src.indexOf("$$", match)) !== -1) {
+    let pos = match - 1;
+    while (state.src[pos] === "\\") pos -= 1;
+    if ((match - pos) % 2 === 1) break;
+    match += 2;
+  }
+  if (match === -1) {
+    if (!silent) state.pending += "$$";
+    state.pos = start;
+    return true;
+  }
+  if (match - start === 0) {
+    if (!silent) state.pending += "$$$$";
+    state.pos = start + 2;
+    return true;
+  }
+  res = isValidBlockMathDelim(state, match);
+  if (!res.can_close) {
+    if (!silent) state.pending += "$$";
+    state.pos = start;
+    return true;
+  }
+  if (!silent) {
+    const token = state.push("math_block", "math", 0);
+    token.block = true;
+    token.markup = "$$";
+    token.content = state.src.slice(start, match);
+  }
+  state.pos = match + 2;
+  return true;
+}
+
+function parseBlockMath(state, start, end, silent) {
+  let pos = state.bMarks[start] + state.tShift[start];
+  let max = state.eMarks[start];
+  if (pos + 2 > max) return false;
+  const openDelim = state.src.slice(pos, pos + 2);
+  if (openDelim !== "$$" && openDelim !== "\\[") return false;
+  const closeDelim = openDelim === "$$" ? "$$" : "\\]";
+  pos += 2;
+  let firstLine = state.src.slice(pos, max);
+  let found = false;
+  if (firstLine.trim().endsWith(closeDelim)) {
+    firstLine = firstLine.trim().slice(0, -2);
+    found = true;
+  }
+  if (silent) return true;
+  let lastLine = "";
+  let next = start;
+  for (; !found;) {
+    next += 1;
+    if (next >= end) break;
+    pos = state.bMarks[next] + state.tShift[next];
+    max = state.eMarks[next];
+    if (pos < max && state.tShift[next] < state.blkIndent) break;
+    const lineText = state.src.slice(pos, max);
+    if (lineText.trim().endsWith(closeDelim)) {
+      const lastPos = state.src.slice(0, max).lastIndexOf(closeDelim);
+      lastLine = state.src.slice(pos, lastPos);
+      found = true;
     }
-    const tr = el("tr");
-    const rowCells = splitRow(lines[index]);
-    rawRows.push(rowCells);
-    for (const cell of rowCells) {
-      const td = el("td");
-      appendInline(td, cell);
-      tr.append(td);
-    }
-    table.append(tr);
-    index += 1;
-    rows += 1;
   }
-  table._rawTable = { header: rawHeader, rows: rawRows };
-  parent.append(table);
-  return index;
+  state.line = next + 1;
+  const token = state.push("math_block", "math", 0);
+  token.block = true;
+  token.content = (firstLine && firstLine.trim() ? `${firstLine}\n` : "")
+    + state.getLines(start + 1, next, state.tShift[start], true)
+    + (lastLine && lastLine.trim() ? lastLine : "");
+  token.map = [start, state.line];
+  token.markup = openDelim;
+  return true;
 }
 
-function splitRow(line) {
-  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+function renderKatexHtml(latex, displayMode) {
+  if (window.katex && typeof window.katex.renderToString === "function") {
+    try {
+      return window.katex.renderToString(latex, {
+        displayMode: Boolean(displayMode),
+        throwOnError: false,
+        strict: false,
+        trust: true,
+        output: "html",
+      });
+    } catch {
+      // Fall back to escaped text on unexpected KaTeX error.
+    }
+  }
+  return escapeHtml(latex);
+}
+
+function getMarkdownEngine() {
+  if (mdEngine) return mdEngine;
+  if (typeof window.markdownit !== "function") return null;
+  const md = window.markdownit({ html: false, linkify: false, breaks: true });
+  const origScanDelims = md.inline.State.prototype.scanDelims;
+  md.inline.State.prototype.scanDelims = function (start, canSplitWord) {
+    const res = origScanDelims.call(this, start, canSplitWord);
+    if (canSplitWord && (!res.can_open || !res.can_close)) {
+      const max = this.posMax;
+      const marker = this.src.charCodeAt(start);
+      let pos = start;
+      while (pos < max && this.src.charCodeAt(pos) === marker) pos += 1;
+      const lastChar = start > 0 ? this.src.charCodeAt(start - 1) : 32;
+      const nextChar = pos < max ? this.src.charCodeAt(pos) : 32;
+      const isCjkOrFullwidth = (c) => c >= 0x2000;
+      if (!this.md.utils.isWhiteSpace(nextChar) && (isCjkOrFullwidth(lastChar) || isCjkOrFullwidth(nextChar))) res.can_open = true;
+      if (!this.md.utils.isWhiteSpace(lastChar) && (isCjkOrFullwidth(lastChar) || isCjkOrFullwidth(nextChar))) res.can_close = true;
+    }
+    return res;
+  };
+  md.inline.ruler.after("escape", "math_inline_block", parseInlineMathBlock);
+  md.inline.ruler.after("escape", "math_inline", parseInlineMath);
+  md.block.ruler.after("blockquote", "math_block", parseBlockMath, {
+    alt: ["paragraph", "reference", "blockquote", "list"],
+  });
+  md.renderer.rules.math_inline = (tokens, idx) => {
+    const content = tokens[idx].content;
+    const displayMode = /\\begin\{(align|equation|gather|cd|alignat)\}/i.test(content);
+    return renderKatexHtml(content, displayMode);
+  };
+  md.renderer.rules.math_block = (tokens, idx) => `<div class="katex-block">${renderKatexHtml(tokens[idx].content, true)}</div>\n`;
+  const origFence = md.renderer.rules.fence;
+  md.renderer.rules.fence = function (tokens, idx, options, env, self) {
+    const token = tokens[idx];
+    const lang = (token.info || "").trim().split(/\s+/)[0].toLowerCase();
+    if (lang === "math" || lang === "latex") {
+      return `<div class="katex-block">${renderKatexHtml(token.content, true)}</div>\n`;
+    }
+    if (lang === "mermaid" || lang === "svg") {
+      return `<pre><code class="language-${lang}">${escapeHtml(token.content.replace(/\n$/, ""))}</code></pre>\n`;
+    }
+    return origFence ? origFence.call(this, tokens, idx, options, env, self) : `<pre><code>${escapeHtml(token.content)}</code></pre>\n`;
+  };
+  mdEngine = md;
+  return mdEngine;
+}
+
+function unescapeInlineBr(html) {
+  return html.replace(/(<code\b[^>]*>[\s\S]*?<\/code>)|&lt;br\s*\/?&gt;/gi, (m, code) => code || "<br>");
+}
+
+function enhanceMarkdownDom(root) {
+  for (const anchor of root.querySelectorAll("a[href]")) {
+    if (anchor.classList.contains("link")) continue;
+    const rawHref = anchor.getAttribute("href") || "";
+    const target = normalizeTarget(rawHref);
+    if (!target) continue;
+    anchor.className = "link";
+    anchor.href = "#";
+    anchor.dataset.href = target;
+    anchor.dataset.copyHref = publicHref(target);
+    anchor.title = target;
+  }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  let current = walker.nextNode();
+  while (current) {
+    const parentEl = current.parentElement;
+    if (
+      parentEl &&
+      !parentEl.closest("a, .katex, code.language-mermaid, code.language-svg")
+    ) {
+      textNodes.push(current);
+    }
+    current = walker.nextNode();
+  }
+  for (const textNode of textNodes) {
+    const value = textNode.nodeValue || "";
+    if (!value) continue;
+    const frag = document.createDocumentFragment();
+    linkifyPlain(frag, value);
+    if (frag.childNodes.length > 1 || (frag.firstChild && frag.firstChild.nodeType !== Node.TEXT_NODE)) {
+      textNode.replaceWith(frag);
+    }
+  }
+}
+
+function renderMarkdown(parent, text) {
+  const md = getMarkdownEngine();
+  if (!md) {
+    parent.append(richPre(String(text || "")));
+    return;
+  }
+  const holder = document.createElement("div");
+  holder.innerHTML = unescapeInlineBr(md.render(String(text || "")));
+  enhanceMarkdownDom(holder);
+  while (holder.firstChild) parent.append(holder.firstChild);
 }
 
 function appendRichText(parent, text) {
-  const lines = String(text).split("\n");
-  lines.forEach((line, index) => {
-    if (index > 0) parent.append(document.createElement("br"));
-    appendInline(parent, line);
-  });
+  const md = getMarkdownEngine();
+  if (!md) {
+    const lines = String(text || "").split("\n");
+    lines.forEach((line, index) => {
+      if (index > 0) parent.append(document.createElement("br"));
+      linkifyPlain(parent, line);
+    });
+    return;
+  }
+  const holder = document.createElement("div");
+  holder.innerHTML = unescapeInlineBr(md.renderInline(String(text || "")));
+  enhanceMarkdownDom(holder);
+  while (holder.firstChild) parent.append(holder.firstChild);
 }
 
 function richPre(text) {
@@ -1204,56 +1290,6 @@ function richPre(text) {
     linkifyPlain(pre, line);
   });
   return pre;
-}
-
-function formatMathInline(raw) {
-  return String(raw)
-    .replace(/\$\\(?:rightarrow|to)\$/g, "→")
-    .replace(/\$\\leftarrow\$/g, "←")
-    .replace(/\$\\leftrightarrow\$/g, "↔")
-    .replace(/\$\\Rightarrow\$/g, "⇒")
-    .replace(/\$\\Leftarrow\$/g, "⇐")
-    .replace(/\$\\Leftrightarrow\$/g, "⇔")
-    .replace(/\$\\(?:le|leq)\$/g, "≤")
-    .replace(/\$\\(?:ge|geq)\$/g, "≥")
-    .replace(/\$\\(?:ne|neq)\$/g, "≠")
-    .replace(/\$\\approx\$/g, "≈")
-    .replace(/\$\\times\$/g, "×")
-    .replace(/\$\\pm\$/g, "±");
-}
-
-function appendInline(parent, rawText) {
-  const text = formatMathInline(rawText);
-  const pattern = new RegExp("(<br\\s*\\/?>|&lt;br\\s*\\/?&gt;|`[^`\\n]+`|\\[[^\\[\\]\\n]+\\]\\([^)\\s]+\\)|\\*\\*(?:(?!\\*\\*)[^\\n])+\\*\\*|(?<![\\w*])\\*[^*\\s\\n](?:(?!<br\\s*\\/?>)[^*\\n])*\\*(?![\\w*])|https?:\\/\\/[^\\s<>]+|file:\\/\\/[^\\s<>]+|" + ABSOLUTE_PATH + "|" + RELATIVE_PATH + ")", "gi");
-  let cursor = 0;
-  for (const match of text.matchAll(pattern)) {
-    if (match.index > cursor) parent.append(document.createTextNode(text.slice(cursor, match.index)));
-    const token = match[0];
-    if (/^(?:<br\s*\/?>|&lt;br\s*\/?&gt;)$/i.test(token)) {
-      parent.append(document.createElement("br"));
-    } else if (token.startsWith("`")) {
-      const code = el("code");
-      linkifyPlain(code, token.slice(1, -1));
-      parent.append(code);
-    } else if (token.startsWith("**")) {
-      const strong = el("strong");
-      appendInline(strong, token.slice(2, -2));
-      parent.append(strong);
-    } else if (token.startsWith("*")) {
-      const em = el("em");
-      appendInline(em, token.slice(1, -1));
-      parent.append(em);
-    } else if (token.startsWith("[")) {
-      const parsed = /^\[([^\[\]\n]+)\]\(([^)\s]+)\)$/.exec(token);
-      const href = parsed && normalizeTarget(parsed[2]);
-      if (href) appendAnchor(parent, parsed[1], href);
-      else parent.append(document.createTextNode(token));
-    } else {
-      appendBare(parent, token);
-    }
-    cursor = match.index + token.length;
-  }
-  if (cursor < text.length) parent.append(document.createTextNode(text.slice(cursor)));
 }
 
 function linkifyPlain(parent, text) {
@@ -1790,14 +1826,18 @@ function renderTableCharts(root) {
   for (const table of tables) {
     if (table.dataset.chartRendered === "1") continue;
     table.dataset.chartRendered = "1";
+    const cellChartText = (cell) => {
+      const text = (cell.textContent || "").replace(/\u200B/g, "").trim();
+      if (!text) return "";
+      return cell.querySelector("strong, b") ? `**${text}**` : text;
+    };
     const raw = table._rawTable;
     const header = raw
       ? raw.header
-      : [...(table.querySelector("tr")?.querySelectorAll("th, td") || [])].map((c) => (c.textContent || "").trim());
+      : [...(table.querySelector("tr")?.querySelectorAll("th, td") || [])].map(cellChartText);
     const rows = raw
       ? raw.rows
-      : [...table.querySelectorAll("tr")].slice(1).map((tr) => [...tr.querySelectorAll("td")].map((c) => (c.textContent || "").trim()));
-    if (!header.length || !rows.length) continue;
+      : [...table.querySelectorAll("tr")].slice(1).map((tr) => [...tr.querySelectorAll("td")].map(cellChartText));
     const chart = window.ompCharts.renderTableChart(header, rows);
     if (!chart || !chart.svg) continue;
     const host = el("div", "mermaid table-chart");

@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Claude Code & OMP GUI — Sessions, Usage & Review",
   "description": "GUI for Claude Code and OMP (Oh My Pi): live session browser, per-model token speed (tok/s) & Today/Month spend tracker with mascot toasts, Mermaid/SVG/table chart viewer, and inline file review comments.",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "publisher": "jinxinyang",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -36,7 +36,9 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:agentSessions.open"
+    "onCommand:agentSessions.open",
+    "onWebviewPanel:agentSessions",
+    "onWebviewPanel:agentSessionsFile"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -48,6 +50,10 @@
       {
         "command": "agentSessions.selectAll",
         "title": "Sessions: Select All in Input"
+      },
+      {
+        "command": "agentSessions.find",
+        "title": "Sessions: Find in Active Panel"
       }
     ],
     "keybindings": [
@@ -56,10 +62,17 @@
         "key": "ctrl+a",
         "mac": "cmd+a",
         "when": "agentSessionsInputFocused"
+      },
+      {
+        "command": "agentSessions.find",
+        "key": "ctrl+f",
+        "mac": "cmd+f",
+        "when": "activeWebviewPanelId == 'agentSessionsFile' || activeWebviewPanelId == 'agentSessions'"
       }
     ]
   },
   "dependencies": {
+    "katex": "^0.19.0",
     "markdown-it": "^14.3.2"
   },
   "homepage": "https://github.com/Zzz141592653/claude-omp-gui#readme",

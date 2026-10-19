@@ -383,7 +383,7 @@ mark.hit.current { background: var(--vscode-editor-findMatchBackground, #f59e0b)
 .md { line-height: 1.62; }
 .md p { margin: 0 0 0.75em; }
 .md p:last-child { margin-bottom: 0; }
-.md h2 {
+.md h1, .md h2 {
   margin: 1.25em 0 0.5em;
   padding-bottom: 0.25em;
   border-bottom: 1px solid var(--line);
@@ -397,7 +397,7 @@ mark.hit.current { background: var(--vscode-editor-findMatchBackground, #f59e0b)
   font-weight: 650;
   line-height: 1.35;
 }
-.md h4 {
+.md h4, .md h5, .md h6 {
   margin: 0.95em 0 0.35em;
   font-size: 13.5px;
   font-weight: 650;
@@ -405,8 +405,13 @@ mark.hit.current { background: var(--vscode-editor-findMatchBackground, #f59e0b)
 }
 .md hr { border: 0; border-top: 1px solid var(--line); margin: 1.25em 0; }
 .md ul, .md ol { margin: 0.4em 0 0.85em; padding-left: 1.5em; }
-.md ul.sub-list, .md ol.sub-list { margin: 0.22em 0 0.35em; }
+.md li > ul, .md li > ol, .md ul.sub-list, .md ol.sub-list { margin: 0.22em 0 0.35em; }
 .md li { margin: 0.26em 0; line-height: 1.6; }
+.md li > p { margin: 0.25em 0; }
+.md li > p:first-child { margin-top: 0; }
+.md li > p:last-child { margin-bottom: 0; }
+.md .katex { font-size: 1.04em; }
+.md .katex-block, .md .katex-display { margin: 0.55em 0; overflow-x: auto; overflow-y: hidden; }
 .md pre.mermaid-error { outline: 1px solid var(--vscode-editorWarning-foreground, #f59e0b); }
 .md .mermaid { position: relative; margin: 10px 0 18px; }
 .md .mermaid svg { width: 100%; max-width: none; height: auto; display: block; }

@@ -1,3 +1,11 @@
+# 1.5.4
+
+Since 1.5.3.
+
+- Unify Markdown and LaTeX math rendering across session threads (`media/panel.js`) and file review views (`review.js`) using `markdown-it` and `KaTeX` (`$...$`, `$$...$$`, `\(...\)`, `\[...\]`, `\frac`, `\text`, `\mathbf`, `\textcolor`, `\colorbox`, `\fcolorbox`, matrices, and CJK full-width punctuation adjacent to `**bold**`).
+- Add in-file search (`Search file (⌘F)` with match count, `Prev`/`Next`, `Enter`/`Shift+Enter` navigation, and non-destructive `CSS.highlights` highlighting that preserves comment selections) to the file review panel.
+- Register `WebviewPanelSerializer` for both `agentSessions` and `agentSessionsFile` so open Session Library and file review panels automatically revive across window reloads.
+
 # 1.5.3
 
 Since 1.5.2.

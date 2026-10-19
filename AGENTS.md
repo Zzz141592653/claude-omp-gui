@@ -8,12 +8,14 @@ This directory is the source. Installed copies live under `~/.cursor/extensions/
 
 Read the file you are about to change. Runtime code is split like this:
 
-- `extension.js` — panel lifecycle, session list, activity state (`refreshSessionMeta` on `fs.watch` growth), replies, file diff, hide/Trash, mascot image picker (`mascotState`), and chat Mermaid script injection
+- `extension.js` — panel lifecycle, session list, activity state (`refreshSessionMeta` on `fs.watch` growth), replies, file diff, hide/Trash, mascot image picker (`mascotState`), and webview script/style injection (`markdown-it`, `katex`, `mermaid`, `omp-charts`)
 - `sources.js` — incremental `headerCache` and transcript reader for OMP and Claude Code jsonl files, file-diff builder, `hasOmpProcess` / `hasClaudeProcess` (match `omp`/`claude`, `omp-*`/`claude-*` custom builds, and path-prefixed binaries), and per-session/per-turn usage & speed stats (`model`, `contextTokens`, `contextWindow`, `totalTokens`, `outputTokens`, `genMs`, `tokPerSec`, `ttftCount`, `avgTtftMs`, `cost`, `todayCost`, `monthCost`, `turnCount`, `recentTurnCosts`) resolved independently from OMP (`usage.cost`, `duration`, `ttft` + `~/.omp/agent/models.yml`) and Claude Code (`cost-state.modelUsage`, `totalAPIDurationWithoutRetries`, `turn_duration` + `~/.claude/settings.json`)
-- `review.js` — comment view for a file opened from a session, and `liveTty` + `pasteIntoTerminal` for both OMP and Claude Code terminals
-- `media/panel.js` and `media/panel.css` — session-library webview: unified time-sorted session list with leading `OMP` / `Claude` tags, `tok/s` speed display, Model Token Throughput comparison modal (`#speeds-modal`), chat Markdown + `<br>` table + chart + Mermaid rendering (`media/mermaid.min.js`, `media/omp-charts.min.js`), and the draggable floating mascot widget (`#mascot-dock`)
+- `review.js` — comment view for a file opened from a session (`markdown-it` + `katex`), and `liveTty` + `pasteIntoTerminal` for both OMP and Claude Code terminals
+- `media/panel.js` and `media/panel.css` — session-library webview: unified time-sorted session list with leading `OMP` / `Claude` tags, `tok/s` speed display, Model Token Throughput comparison modal (`#speeds-modal`), chat rendering via `markdown-it` + `katex` + `enhanceMarkdownDom` + `<br>` table + chart + Mermaid rendering (`media/mermaid.min.js`, `media/omp-charts.min.js`), and the draggable floating mascot widget (`#mascot-dock`)
 - `media/mascot-omp.png`, `media/mascot-omp-idle.png`, `media/mascot-claude.png`, `media/mascot-claude-idle.png` — built-in thinking and idle expressions for OMP-tan and Claude-tan
 - `media/fileview.js` and `media/fileview.css` — file-comment webview (`clearHighlights` updates `<mark class="comment-hit">` in place and preserves `docEl.scrollTop` when HTML is unchanged)
+
+Prefer mature open-source libraries (`markdown-it`, `katex`, `mermaid`, `omp-charts`) with thin plugin/DOM hooks (`scanDelims`, `renderer.rules`, `enhanceMarkdownDom`) over custom regex parsers; only write custom adapters for domain-specific behavior (such as local file-path review links).
 User-facing strings are English.
 
 ## Where sessions come from

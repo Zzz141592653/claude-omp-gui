@@ -5,12 +5,13 @@ const crypto = require("crypto");
 const { spawn, execFileSync } = require("child_process");
 const vscode = require("vscode");
 const MarkdownIt = require("markdown-it");
+const katex = require("katex");
 
 const { normalizeRecord, openRound, noteLiveFile, closeRound, hashText } = require("./comments");
 const { panelIsOpen, releaseClosedPanel } = require("./panel-life");
 const { hasOmpProcess, hasClaudeProcess } = require("./sources");
 
-const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
+const md = createMarkdownEngine();
 const MAX_BYTES = 2_000_000;
 
 let view;
@@ -24,6 +25,14 @@ function noteInputFocus(webview, focused) {
 
 function selectAllInInput() {
   void inputWebview?.postMessage({ type: "selectAll" });
+}
+
+function focusFindInFileView() {
+  if (view && panelIsOpen(view.panel) && view.panel.active) {
+    void view.panel.webview.postMessage({ type: "focusFind" });
+    return true;
+  }
+  return false;
 }
 
 function openReviewedFile(context, location, session) {
@@ -40,17 +49,36 @@ function openReviewedFile(context, location, session) {
     view = undefined;
   }
   if (!view) view = new FileView(context);
+  void context.globalState?.update("lastReviewedFile", {
+    file: location.file,
+    line: location.line || 0,
+    session: session || null,
+  });
   return view.show(location, session);
 }
 
+async function reviveReviewedFilePanel(context, restoredPanel, state) {
+  const saved = state?.file ? state : context.globalState?.get("lastReviewedFile");
+  if (!saved?.file || !fs.existsSync(saved.file)) {
+    restoredPanel.dispose();
+    return;
+  }
+  if (view && view.panel !== restoredPanel) {
+    view.watcher?.dispose();
+  }
+  view = new FileView(context, restoredPanel);
+  await view.show({ file: saved.file, line: saved.line || 0 }, saved.session || null);
+}
+
 class FileView {
-  constructor(context) {
+  constructor(context, existingPanel) {
     this.context = context;
-    this.panel = vscode.window.createWebviewPanel("agentSessionsFile", "File", vscode.ViewColumn.Active, {
+    this.panel = existingPanel || vscode.window.createWebviewPanel("agentSessionsFile", "File", vscode.ViewColumn.Active, {
       enableScripts: true,
       retainContextWhenHidden: true,
     });
     const webview = this.panel.webview;
+    webview.options = { enableScripts: true };
     webview.onDidReceiveMessage((message) => this.onMessage(message));
     webview.html = htmlFor(context, webview);
     this.panel.onDidDispose(() => {
@@ -558,20 +586,232 @@ function isMarkdown(file) {
   return /\.(md|markdown|mdx)$/i.test(file);
 }
 
-function formatMathInline(raw) {
-  return String(raw)
-    .replace(/\$\\(?:rightarrow|to)\$/g, "→")
-    .replace(/\$\\leftarrow\$/g, "←")
-    .replace(/\$\\leftrightarrow\$/g, "↔")
-    .replace(/\$\\Rightarrow\$/g, "⇒")
-    .replace(/\$\\Leftarrow\$/g, "⇐")
-    .replace(/\$\\Leftrightarrow\$/g, "⇔")
-    .replace(/\$\\(?:le|leq)\$/g, "≤")
-    .replace(/\$\\(?:ge|geq)\$/g, "≥")
-    .replace(/\$\\(?:ne|neq)\$/g, "≠")
-    .replace(/\$\\approx\$/g, "≈")
-    .replace(/\$\\times\$/g, "×")
-    .replace(/\$\\pm\$/g, "±");
+function isMathWhitespace(char) {
+  return char !== undefined && /^\s$/u.test(char);
+}
+
+function isMathWordOrNumber(char) {
+  return char !== undefined && /^[\w\d]$/u.test(char);
+}
+
+function isValidInlineMathDelim(state, pos) {
+  const prevChar = state.src[pos - 1];
+  const char = state.src[pos];
+  const nextChar = state.src[pos + 1];
+  if (char !== "$") return { can_open: false, can_close: false };
+  const canOpen = prevChar !== "$" && prevChar !== "\\" && nextChar !== undefined && !isMathWhitespace(nextChar) && (prevChar === undefined || isMathWhitespace(prevChar) || !isMathWordOrNumber(prevChar));
+  const canClose = nextChar !== "$" && prevChar !== undefined && !isMathWhitespace(prevChar) && (nextChar === undefined || isMathWhitespace(nextChar) || !isMathWordOrNumber(nextChar));
+  return { can_open: canOpen, can_close: canClose };
+}
+
+function isValidBlockMathDelim(state, pos) {
+  const prevChar = state.src[pos - 1];
+  const char = state.src[pos];
+  const nextChar = state.src[pos + 1];
+  const nextCharPlus1 = state.src[pos + 2];
+  if (char === "$" && prevChar !== "$" && prevChar !== "\\" && nextChar === "$" && nextCharPlus1 !== "$") {
+    return { can_open: true, can_close: true };
+  }
+  return { can_open: false, can_close: false };
+}
+
+function parseInlineMath(state, silent) {
+  if (state.src.startsWith("\\(", state.pos)) {
+    const start = state.pos + 2;
+    const match = state.src.indexOf("\\)", start);
+    if (match === -1) return false;
+    if (!silent && match > start) {
+      const token = state.push("math_inline", "math", 0);
+      token.markup = "\\(";
+      token.content = state.src.slice(start, match);
+    }
+    state.pos = match + 2;
+    return true;
+  }
+  if (state.src.startsWith("\\[", state.pos)) {
+    const start = state.pos + 2;
+    const match = state.src.indexOf("\\]", start);
+    if (match === -1) return false;
+    if (!silent && match > start) {
+      const token = state.push("math_block", "math", 0);
+      token.block = true;
+      token.markup = "\\[";
+      token.content = state.src.slice(start, match);
+    }
+    state.pos = match + 2;
+    return true;
+  }
+  if (state.src[state.pos] !== "$") return false;
+  let res = isValidInlineMathDelim(state, state.pos);
+  if (!res.can_open) {
+    if (!silent) state.pending += "$";
+    state.pos += 1;
+    return true;
+  }
+  const start = state.pos + 1;
+  let match = start;
+  while ((match = state.src.indexOf("$", match)) !== -1) {
+    if (state.src.indexOf("\n", start) !== -1 && state.src.indexOf("\n", start) < match) {
+      match = -1;
+      break;
+    }
+    let pos = match - 1;
+    while (state.src[pos] === "\\") pos -= 1;
+    if ((match - pos) % 2 === 1) break;
+    match += 1;
+  }
+  if (match === -1) {
+    if (!silent) state.pending += "$";
+    state.pos = start;
+    return true;
+  }
+  if (match - start === 0) {
+    if (!silent) state.pending += "$$";
+    state.pos = start + 1;
+    return true;
+  }
+  res = isValidInlineMathDelim(state, match);
+  if (!res.can_close) {
+    if (!silent) state.pending += "$";
+    state.pos = start;
+    return true;
+  }
+  if (!silent) {
+    const token = state.push("math_inline", "math", 0);
+    token.markup = "$";
+    token.content = state.src.slice(start, match);
+  }
+  state.pos = match + 1;
+  return true;
+}
+
+function parseInlineMathBlock(state, silent) {
+  if (state.src.slice(state.pos, state.pos + 2) !== "$$") return false;
+  let res = isValidBlockMathDelim(state, state.pos);
+  if (!res.can_open) {
+    if (!silent) state.pending += "$$";
+    state.pos += 2;
+    return true;
+  }
+  const start = state.pos + 2;
+  let match = start;
+  while ((match = state.src.indexOf("$$", match)) !== -1) {
+    let pos = match - 1;
+    while (state.src[pos] === "\\") pos -= 1;
+    if ((match - pos) % 2 === 1) break;
+    match += 2;
+  }
+  if (match === -1) {
+    if (!silent) state.pending += "$$";
+    state.pos = start;
+    return true;
+  }
+  if (match - start === 0) {
+    if (!silent) state.pending += "$$$$";
+    state.pos = start + 2;
+    return true;
+  }
+  res = isValidBlockMathDelim(state, match);
+  if (!res.can_close) {
+    if (!silent) state.pending += "$$";
+    state.pos = start;
+    return true;
+  }
+  if (!silent) {
+    const token = state.push("math_block", "math", 0);
+    token.block = true;
+    token.markup = "$$";
+    token.content = state.src.slice(start, match);
+  }
+  state.pos = match + 2;
+  return true;
+}
+
+function parseBlockMath(state, start, end, silent) {
+  let pos = state.bMarks[start] + state.tShift[start];
+  let max = state.eMarks[start];
+  if (pos + 2 > max) return false;
+  const openDelim = state.src.slice(pos, pos + 2);
+  if (openDelim !== "$$" && openDelim !== "\\[") return false;
+  const closeDelim = openDelim === "$$" ? "$$" : "\\]";
+  pos += 2;
+  let firstLine = state.src.slice(pos, max);
+  let found = false;
+  if (firstLine.trim().endsWith(closeDelim)) {
+    firstLine = firstLine.trim().slice(0, -2);
+    found = true;
+  }
+  if (silent) return true;
+  let lastLine = "";
+  let next = start;
+  for (; !found;) {
+    next += 1;
+    if (next >= end) break;
+    pos = state.bMarks[next] + state.tShift[next];
+    max = state.eMarks[next];
+    if (pos < max && state.tShift[next] < state.blkIndent) break;
+    const lineText = state.src.slice(pos, max);
+    if (lineText.trim().endsWith(closeDelim)) {
+      const lastPos = state.src.slice(0, max).lastIndexOf(closeDelim);
+      lastLine = state.src.slice(pos, lastPos);
+      found = true;
+    }
+  }
+  state.line = next + 1;
+  const token = state.push("math_block", "math", 0);
+  token.block = true;
+  token.content = (firstLine && firstLine.trim() ? `${firstLine}\n` : "")
+    + state.getLines(start + 1, next, state.tShift[start], true)
+    + (lastLine && lastLine.trim() ? lastLine : "");
+  token.map = [start, state.line];
+  token.markup = openDelim;
+  return true;
+}
+
+function renderKatexHtml(latex, displayMode) {
+  try {
+    return katex.renderToString(latex, {
+      displayMode: Boolean(displayMode),
+      throwOnError: false,
+      strict: false,
+      trust: true,
+      output: "html",
+    });
+  } catch {
+    return escapeHtml(latex);
+  }
+}
+
+function createMarkdownEngine() {
+  const engine = new MarkdownIt({ html: false, linkify: true, breaks: false });
+  const origScanDelims = engine.inline.State.prototype.scanDelims;
+  engine.inline.State.prototype.scanDelims = function (start, canSplitWord) {
+    const res = origScanDelims.call(this, start, canSplitWord);
+    if (canSplitWord && (!res.can_open || !res.can_close)) {
+      const max = this.posMax;
+      const marker = this.src.charCodeAt(start);
+      let pos = start;
+      while (pos < max && this.src.charCodeAt(pos) === marker) pos += 1;
+      const lastChar = start > 0 ? this.src.charCodeAt(start - 1) : 32;
+      const nextChar = pos < max ? this.src.charCodeAt(pos) : 32;
+      const isCjkOrFullwidth = (c) => c >= 0x2000;
+      if (!this.md.utils.isWhiteSpace(nextChar) && (isCjkOrFullwidth(lastChar) || isCjkOrFullwidth(nextChar))) res.can_open = true;
+      if (!this.md.utils.isWhiteSpace(lastChar) && (isCjkOrFullwidth(lastChar) || isCjkOrFullwidth(nextChar))) res.can_close = true;
+    }
+    return res;
+  };
+  engine.inline.ruler.after("escape", "math_inline_block", parseInlineMathBlock);
+  engine.inline.ruler.after("escape", "math_inline", parseInlineMath);
+  engine.block.ruler.after("blockquote", "math_block", parseBlockMath, {
+    alt: ["paragraph", "reference", "blockquote", "list"],
+  });
+  engine.renderer.rules.math_inline = (tokens, idx) => {
+    const content = tokens[idx].content;
+    const displayMode = /\\begin\{(align|equation|gather|cd|alignat)\}/i.test(content);
+    return renderKatexHtml(content, displayMode);
+  };
+  engine.renderer.rules.math_block = (tokens, idx) => `<div class="katex-block">${renderKatexHtml(tokens[idx].content, true)}</div>\n`;
+  return engine;
 }
 
 function renderText(source) {
@@ -582,7 +822,7 @@ function renderText(source) {
 }
 
 function renderMarkdown(source) {
-  const tokens = md.parse(formatMathInline(source), {});
+  const tokens = md.parse(String(source || ""), {});
   const parts = [];
   let buf = [];
   let map = null;
@@ -644,6 +884,11 @@ function htmlFor(context, webview) {
   const css = fs.readFileSync(path.join(context.extensionPath, "media", "fileview.css"), "utf8");
   const script = fs.readFileSync(path.join(context.extensionPath, "media", "fileview.js"), "utf8");
   const nonce = crypto.randomUUID();
+  const katexCssFile = path.join(context.extensionPath, "node_modules", "katex", "dist", "katex.min.css");
+  const katexCssSrc = fs.existsSync(katexCssFile)
+    ? String(webview.asWebviewUri(vscode.Uri.file(katexCssFile))).replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+    : "";
+  const katexCss = katexCssSrc ? `<link rel="stylesheet" href="${katexCssSrc}" />` : "";
   const mermaidFile = path.join(context.extensionPath, "media", "mermaid.min.js");
   const mermaidSrc = fs.existsSync(mermaidFile)
     ? String(webview.asWebviewUri(vscode.Uri.file(mermaidFile))).replace(/&/g, "&amp;").replace(/"/g, "&quot;")
@@ -653,13 +898,20 @@ function htmlFor(context, webview) {
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}' ${webview.cspSource};" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; font-src ${webview.cspSource}; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};" />
+${katexCss}
 <style>${css}</style>
 </head>
 <body>
 <header>
   <div id="file"></div>
   <div id="session"></div>
+  <div class="find-row">
+    <input id="find" type="search" placeholder="Search file (⌘F)" />
+    <span id="find-count"></span>
+    <button id="find-prev" type="button" title="Previous match (Shift+Enter)">Prev</button>
+    <button id="find-next" type="button" title="Next match (Enter)">Next</button>
+  </div>
   <button id="send" type="button">Send to this turn</button>
   <button id="diff" type="button">View changes</button>
 </header>
@@ -704,4 +956,4 @@ ${mermaid}
 </html>`;
 }
 
-module.exports = { openReviewedFile, liveTty, hasOmpProcess, pasteIntoTerminal, noteInputFocus, selectAllInInput };
+module.exports = { openReviewedFile, reviveReviewedFilePanel, liveTty, hasOmpProcess, pasteIntoTerminal, noteInputFocus, selectAllInInput, focusFindInFileView };

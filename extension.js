@@ -4,7 +4,7 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const vscode = require("vscode");
 const { listSessions, refreshSessionMeta, createTranscriptReader, readTranscript, snapshotTranscript, buildFileDiff, ompRoots, hasConversationEntries, hasClaudeProcess } = require("./sources");
-const { openReviewedFile, liveTty, pasteIntoTerminal, noteInputFocus, selectAllInInput } = require("./review");
+const { openReviewedFile, reviveReviewedFilePanel, liveTty, pasteIntoTerminal, noteInputFocus, selectAllInInput, focusFindInFileView } = require("./review");
 const { panelIsOpen, releaseClosedPanel } = require("./panel-life");
 
 const SCAN_MS = 60_000;
@@ -43,6 +43,24 @@ function activate(context) {
     status,
     vscode.commands.registerCommand("agentSessions.open", () => openPanel(context, true)),
     vscode.commands.registerCommand("agentSessions.selectAll", () => selectAllInInput()),
+    vscode.commands.registerCommand("agentSessions.find", () => {
+      if (focusFindInFileView()) return;
+      if (panel && panelIsOpen(panel)) void panel.webview.postMessage({ type: "focusFind" });
+    }),
+    ...(typeof vscode.window.registerWebviewPanelSerializer === "function"
+      ? [
+          vscode.window.registerWebviewPanelSerializer("agentSessions", {
+            async deserializeWebviewPanel(restoredPanel) {
+              adoptLibraryPanel(context, restoredPanel);
+            },
+          }),
+          vscode.window.registerWebviewPanelSerializer("agentSessionsFile", {
+            async deserializeWebviewPanel(restoredPanel, state) {
+              await reviveReviewedFilePanel(context, restoredPanel, state);
+            },
+          }),
+        ]
+      : []),
     {
       dispose: () => {
         clearInterval(scanTimer);
@@ -81,13 +99,19 @@ function openPanel(context, reveal) {
     postSessions();
     return;
   }
-  panel = vscode.window.createWebviewPanel(
+  const created = vscode.window.createWebviewPanel(
     "agentSessions",
     "Sessions",
     vscode.ViewColumn.Active,
     { enableScripts: true, retainContextWhenHidden: true }
   );
+  adoptLibraryPanel(context, created);
+}
+
+function adoptLibraryPanel(context, targetPanel) {
+  panel = targetPanel;
   const webview = panel.webview;
+  webview.options = { enableScripts: true };
   webview.html = htmlFor(context, webview);
   webview.onDidReceiveMessage((message) => {
     if (message.type === "inputFocus") noteInputFocus(webview, message.focused === true);
@@ -1148,24 +1172,31 @@ async function saveMascotPrefs(prefs) {
   await extensionContext?.globalState.update("mascotPrefs", { ...prev, ...prefs });
 }
 
+function webviewAssetUri(context, webview, ...segments) {
+  const file = path.join(context.extensionPath, ...segments);
+  if (!fs.existsSync(file)) return "";
+  return String(webview.asWebviewUri(vscode.Uri.file(file))).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
 function htmlFor(context, webview) {
   const css = fs.readFileSync(path.join(context.extensionPath, "media", "panel.css"), "utf8");
   const script = fs.readFileSync(path.join(context.extensionPath, "media", "panel.js"), "utf8");
   const nonce = String(Date.now());
-  const mermaidFile = path.join(context.extensionPath, "media", "mermaid.min.js");
-  const mermaidSrc = fs.existsSync(mermaidFile)
-    ? String(webview.asWebviewUri(vscode.Uri.file(mermaidFile))).replace(/&/g, "&amp;").replace(/"/g, "&quot;")
-    : "";
+  const katexCssSrc = webviewAssetUri(context, webview, "node_modules", "katex", "dist", "katex.min.css");
+  const katexCss = katexCssSrc ? `<link rel="stylesheet" href="${katexCssSrc}" />` : "";
+  const markdownItSrc = webviewAssetUri(context, webview, "node_modules", "markdown-it", "dist", "markdown-it.min.js");
+  const markdownIt = markdownItSrc ? `<script nonce="${nonce}" src="${markdownItSrc}"></script>` : "";
+  const katexJsSrc = webviewAssetUri(context, webview, "node_modules", "katex", "dist", "katex.min.js");
+  const katexJs = katexJsSrc ? `<script nonce="${nonce}" src="${katexJsSrc}"></script>` : "";
+  const mermaidSrc = webviewAssetUri(context, webview, "media", "mermaid.min.js");
   const mermaid = mermaidSrc ? `<script nonce="${nonce}" src="${mermaidSrc}"></script>` : "";
-  const ompChartsFile = path.join(context.extensionPath, "media", "omp-charts.min.js");
-  const ompChartsSrc = fs.existsSync(ompChartsFile)
-    ? String(webview.asWebviewUri(vscode.Uri.file(ompChartsFile))).replace(/&/g, "&amp;").replace(/"/g, "&quot;")
-    : "";
+  const ompChartsSrc = webviewAssetUri(context, webview, "media", "omp-charts.min.js");
   const ompCharts = ompChartsSrc ? `<script nonce="${nonce}" src="${ompChartsSrc}"></script>` : "";
   return `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${webview.cspSource}; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${webview.cspSource}; font-src ${webview.cspSource}; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'nonce-${nonce}' ${webview.cspSource};" />
+  ${katexCss}
   <style>${css}</style>
 </head>
 <body>
@@ -1239,6 +1270,8 @@ function htmlFor(context, webview) {
     </div>
     <div id="diagram-stage"></div>
   </div>
+  ${markdownIt}
+  ${katexJs}
   ${mermaid}
   ${ompCharts}
   <script nonce="${nonce}">${script}</script>
