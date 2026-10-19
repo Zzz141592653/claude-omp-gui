@@ -1,3 +1,11 @@
+# 1.5.5
+
+Since 1.5.4.
+
+- Add multiple entry points to open the Session Library: a top-right editor toolbar icon (`editor/title`), a default keyboard shortcut (`Cmd+Alt+S` on macOS, `Ctrl+Alt+S` on Windows/Linux), and a one-time reopen tip when closing the Session Library panel for the first time.
+- Keep the `Sessions` label visible in the bottom-left status bar item when background sessions are active (`Sessions · 1 running · 1 new` instead of replacing the label with counts).
+- Document all four ways to open the Session Library in `readme.md` for GitHub and the Cursor Extension Marketplace.
+
 # 1.5.4
 
 Since 1.5.3.

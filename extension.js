@@ -5,7 +5,7 @@ const { execFileSync } = require("child_process");
 const vscode = require("vscode");
 const { listSessions, refreshSessionMeta, createTranscriptReader, readTranscript, snapshotTranscript, buildFileDiff, ompRoots, hasConversationEntries, hasClaudeProcess } = require("./sources");
 const { openReviewedFile, reviveReviewedFilePanel, liveTty, pasteIntoTerminal, noteInputFocus, selectAllInInput, focusFindInFileView } = require("./review");
-const { panelIsOpen, releaseClosedPanel } = require("./panel-life");
+const { panelIsOpen, releaseClosedPanel, formatStatusText } = require("./panel-life");
 
 const SCAN_MS = 60_000;
 const PROBE_MS = 2_000;
@@ -34,8 +34,8 @@ function activate(context) {
   hasBaseline = context.globalState.get("activityBaseline") === true;
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusItem = status;
-  status.text = "$(comment-discussion) Sessions";
-  status.tooltip = "Browse OMP and Claude Code sessions by source";
+  status.text = formatStatusText(0, 0);
+  status.tooltip = "Open Session Library (Cmd+Alt+S / Ctrl+Alt+S) — Browse OMP and Claude Code sessions";
   status.command = "agentSessions.open";
   status.show();
 
@@ -136,6 +136,17 @@ function adoptLibraryPanel(context, targetPanel) {
   });
   panel.onDidDispose(() => {
     releaseClosedPanel(releaseLibrary, () => noteInputFocus(webview, false));
+    if (!context.globalState.get("reopenHintShown")) {
+      void context.globalState.update("reopenHintShown", true);
+      void vscode.window
+        .showInformationMessage(
+          "Sessions closed. Reopen anytime from the bottom-left 'Sessions' status bar button, the top-right editor bar icon, or Cmd+Alt+S (Ctrl+Alt+S).",
+          "Reopen Sessions"
+        )
+        .then((choice) => {
+          if (choice === "Reopen Sessions") openPanel(context, true);
+        });
+    }
   });
 }
 
@@ -802,14 +813,7 @@ function updateStatus() {
     .filter((session) => !session.hidden || session.activity === "fresh" || session.activity === "running");
   const running = pool.filter((session) => session.activity === "running").length;
   const fresh = pool.filter((session) => session.activity === "fresh").length;
-  if (!running && !fresh) {
-    statusItem.text = "$(comment-discussion) Sessions";
-    return;
-  }
-  const bits = [];
-  if (running) bits.push(`${running} running`);
-  if (fresh) bits.push(`${fresh} new`);
-  statusItem.text = `$(comment-discussion) ${bits.join(" · ")}`;
+  statusItem.text = formatStatusText(running, fresh);
 }
 
 function tailPhase(session) {

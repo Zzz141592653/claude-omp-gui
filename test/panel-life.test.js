@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { panelIsOpen, releaseClosedPanel } = require("../panel-life");
+const { panelIsOpen, releaseClosedPanel, formatStatusText } = require("../panel-life");
 
 function disposedPanel() {
   return {
@@ -45,4 +45,11 @@ test("a different cleanup error still drops the closed panel", () => {
     /disk full/
   );
   assert.equal(panel, undefined);
+});
+
+test("status bar text always keeps the Sessions label visible alongside live counts", () => {
+  assert.equal(formatStatusText(0, 0), "$(comment-discussion) Sessions");
+  assert.equal(formatStatusText(1, 0), "$(comment-discussion) Sessions · 1 running");
+  assert.equal(formatStatusText(0, 2), "$(comment-discussion) Sessions · 2 new");
+  assert.equal(formatStatusText(2, 3), "$(comment-discussion) Sessions · 2 running · 3 new");
 });

@@ -23,4 +23,12 @@ function releaseClosedPanel(release, cleanup) {
   }
 }
 
-module.exports = { panelIsOpen, releaseClosedPanel };
+function formatStatusText(running, fresh) {
+  const bits = [];
+  if (running > 0) bits.push(`${running} running`);
+  if (fresh > 0) bits.push(`${fresh} new`);
+  if (!bits.length) return "$(comment-discussion) Sessions";
+  return `$(comment-discussion) Sessions · ${bits.join(" · ")}`;
+}
+
+module.exports = { panelIsOpen, releaseClosedPanel, formatStatusText };
