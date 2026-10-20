@@ -1,3 +1,10 @@
+# 1.5.7
+
+Since 1.5.6.
+
+- Aggregate subagent `.jsonl` usage, token throughput (`tok/s`), and spend (`<session>/<Agent>.jsonl` for OMP and `<session>/subagents/agent-*.jsonl` for Claude Code) into the parent session across the session list, opened transcript header, and mascot spend toasts while preserving the parent session's title, model, and current context window fill.
+- Watch session companion and `subagents/` directories with `fs.watch` so background subagent activity immediately updates parent session stats and running state.
+
 # 1.5.6
 
 Since 1.5.5.

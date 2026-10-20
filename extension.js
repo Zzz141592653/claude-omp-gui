@@ -591,6 +591,21 @@ function watchLibraries() {
       }
     }
   }
+  for (const session of sessions) {
+    if (!session.filePath || !session.filePath.endsWith(".jsonl")) continue;
+    const companion = session.filePath.slice(0, -6);
+    try {
+      if (fs.statSync(companion).isDirectory()) {
+        wanted.add(companion);
+        const subagentsDir = path.join(companion, "subagents");
+        if (fs.existsSync(subagentsDir) && fs.statSync(subagentsDir).isDirectory()) {
+          wanted.add(subagentsDir);
+        }
+      }
+    } catch {
+      // Companion directory is optional.
+    }
+  }
   for (const [dir, watcher] of libraryWatchers) {
     if (wanted.has(dir)) continue;
     watcher.close();
@@ -617,8 +632,10 @@ function onLibraryEvent(dir, filename) {
   }
   if (!name.endsWith(".jsonl")) {
     if (name.startsWith(".")) return;
-    if (!libraryRoots().includes(dir)) return;
     const full = path.join(dir, name);
+    const isRootChild = libraryRoots().includes(dir);
+    const isCompanion = sessions.some((item) => item.filePath === `${full}.jsonl` || full === path.join(item.filePath.slice(0, -6), "subagents"));
+    if (!isRootChild && !isCompanion) return;
     try {
       if (fs.statSync(full).isDirectory()) {
         watchOne(full);
@@ -630,9 +647,15 @@ function onLibraryEvent(dir, filename) {
     return;
   }
   const full = path.join(dir, name);
-  const session = sessions.find((item) => item.filePath === full);
-  if (session) noteGrowth(session);
-  else scheduleCatalog();
+  const session = sessions.find(
+    (item) => item.filePath === full || (item.filePath.endsWith(".jsonl") && full.startsWith(`${item.filePath.slice(0, -6)}${path.sep}`)),
+  );
+  if (session) {
+    if (session.filePath === full) noteGrowth(session);
+    else noteSubagentGrowth(session);
+  } else {
+    scheduleCatalog();
+  }
 }
 
 function scheduleCatalog() {
@@ -661,6 +684,19 @@ function noteGrowth(session) {
   if (follow?.filePath === session.filePath) {
     if (!follow.watcher) attachWatch();
     scheduleLive();
+  }
+  postSessionsSoon();
+}
+
+function noteSubagentGrowth(session) {
+  const prevMtime = session.mtime;
+  const prevTokens = session.totalTokens;
+  const prevCost = session.cost;
+  refreshSessionMeta(session);
+  if (session.mtime === prevMtime && session.totalTokens === prevTokens && session.cost === prevCost) return;
+  markRunning(session);
+  if (openKey === session.key && panel && panelIsOpen(panel)) {
+    postTranscript(session, { live: true, following: Boolean(follow?.watcher) });
   }
   postSessionsSoon();
 }

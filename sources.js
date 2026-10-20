@@ -145,31 +145,144 @@ function cachedHeader(filePath, seen, source, visit) {
     return null;
   }
   const dayStart = currentDayStart();
+  const { subAccs, subSig, maxMtimeMs } = scanSubagentUsage(filePath, seen, source);
+  const effectiveMtimeMs = Math.max(stat.mtimeMs, maxMtimeMs);
   const cached = headerCache.get(filePath);
-  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs && cached.subSig === subSig) {
     if (cached.dayStart !== dayStart && cached.acc && !cached.acc.sidechain) {
-      cached.meta = finalizeMeta(cached.acc, stat);
+      const mergedAcc = mergeUsageStates(cached.acc, subAccs);
+      cached.meta = finalizeMeta(mergedAcc, stat, effectiveMtimeMs);
       cached.dayStart = dayStart;
     }
     return cached.meta;
   }
   if (source === "claude" && isOmpMirror(filePath)) {
-    headerCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, offset: stat.size, dayStart, acc: null, meta: null });
+    headerCache.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, offset: stat.size, subSig, dayStart, acc: null, meta: null });
     return null;
   }
-  const prev = cached && cached.acc && stat.size > cached.offset ? cached : null;
-  const scanned = scanSessionMeta(filePath, stat, source, visit, prev);
+  let scanned;
+  if (cached && cached.acc && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+    scanned = { acc: cached.acc, offset: cached.offset };
+  } else {
+    const prev = cached && cached.acc && stat.size > cached.offset ? cached : null;
+    scanned = scanSessionMeta(filePath, stat, source, visit, prev);
+  }
   if (!scanned) return null;
-  const stored = !scanned.acc.sidechain ? finalizeMeta(scanned.acc, stat) : null;
+  const mergedAcc = !scanned.acc.sidechain ? mergeUsageStates(scanned.acc, subAccs) : scanned.acc;
+  const stored = !scanned.acc.sidechain ? finalizeMeta(mergedAcc, stat, effectiveMtimeMs) : null;
   headerCache.set(filePath, {
     size: stat.size,
     mtimeMs: stat.mtimeMs,
     offset: scanned.offset,
+    subSig,
     dayStart,
     acc: scanned.acc,
     meta: stored,
   });
   return stored;
+}
+
+function subagentFiles(filePath) {
+  if (!filePath || !filePath.endsWith(".jsonl")) return [];
+  const companionDir = filePath.slice(0, -6);
+  if (!isDir(companionDir)) return [];
+  const files = [];
+  const collect = (dir, depth) => {
+    for (const name of safeReaddir(dir)) {
+      if (name.startsWith(".")) continue;
+      const full = path.join(dir, name);
+      if (name.endsWith(".jsonl")) {
+        files.push(full);
+      } else if (depth < 2 && isDir(full)) {
+        collect(full, depth + 1);
+      }
+    }
+  };
+  collect(companionDir, 0);
+  files.sort();
+  return files;
+}
+
+function scanSubagentUsage(filePath, seen, source) {
+  if (source !== "omp" && source !== "claude") return { subAccs: [], subSig: "", maxMtimeMs: 0 };
+  const files = subagentFiles(filePath);
+  if (!files.length) return { subAccs: [], subSig: "", maxMtimeMs: 0 };
+  const subVisit = source === "omp"
+    ? (entry, acc) => noteOmpUsage(acc, entry)
+    : (entry, acc) => noteClaudeUsage(acc, entry);
+  const subAccs = [];
+  const sigParts = [];
+  let maxMtimeMs = 0;
+  for (const subFile of files) {
+    if (seen) seen.add(subFile);
+    let subStat;
+    try {
+      subStat = fs.statSync(subFile);
+    } catch {
+      continue;
+    }
+    if (subStat.mtimeMs > maxMtimeMs) maxMtimeMs = subStat.mtimeMs;
+    sigParts.push(`${subFile}:${subStat.size}:${subStat.mtimeMs}`);
+    const subCached = headerCache.get(subFile);
+    if (subCached && subCached.size === subStat.size && subCached.mtimeMs === subStat.mtimeMs && subCached.acc) {
+      subAccs.push(subCached.acc);
+      continue;
+    }
+    const prevSub = subCached && subCached.acc && subStat.size > subCached.offset ? subCached : null;
+    const scannedSub = scanSessionMeta(subFile, subStat, source, subVisit, prevSub);
+    if (!scannedSub) continue;
+    headerCache.set(subFile, {
+      size: subStat.size,
+      mtimeMs: subStat.mtimeMs,
+      offset: scannedSub.offset,
+      subSig: "",
+      dayStart: 0,
+      acc: scannedSub.acc,
+      meta: null,
+    });
+    subAccs.push(scannedSub.acc);
+  }
+  return { subAccs, subSig: sigParts.join("\n"), maxMtimeMs };
+}
+
+function mergeUsageStates(parentAcc, subAccs) {
+  if (!subAccs || !subAccs.length) return parentAcc;
+  const merged = {
+    ...parentAcc,
+    turnCosts: parentAcc.turnCosts ? parentAcc.turnCosts.slice() : [],
+    msgTokens: null,
+  };
+  if (parentAcc.msgTokens && parentAcc.msgTokens.size > 0) {
+    merged.msgTokens = new Map();
+    for (const [k, v] of parentAcc.msgTokens.entries()) {
+      merged.msgTokens.set(`p:${k}`, v);
+    }
+  }
+  for (let index = 0; index < subAccs.length; index += 1) {
+    const sub = subAccs[index];
+    if (!sub) continue;
+    if (!merged.model && sub.model) merged.model = sub.model;
+    merged.totalTokens = (merged.totalTokens || 0) + (sub.totalTokens || 0);
+    merged.outputTokens = (merged.outputTokens || 0) + (sub.outputTokens || 0);
+    merged.genMs = (merged.genMs || 0) + (sub.genMs || 0);
+    merged.ttftMs = (merged.ttftMs || 0) + (sub.ttftMs || 0);
+    merged.ttftCount = (merged.ttftCount || 0) + (sub.ttftCount || 0);
+    merged.cost = (merged.cost || 0) + (sub.cost || 0);
+    merged.turnDurationMs = (merged.turnDurationMs || 0) + (sub.turnDurationMs || 0);
+    if (sub.turnCosts && sub.turnCosts.length > 0) {
+      merged.turnCosts.push(...sub.turnCosts);
+    }
+    if (sub.msgTokens && sub.msgTokens.size > 0) {
+      if (!merged.msgTokens) merged.msgTokens = new Map();
+      for (const [k, v] of sub.msgTokens.entries()) {
+        merged.msgTokens.set(`s${index}:${k}`, v);
+      }
+    }
+  }
+  if (merged.turnCosts.length > 1) {
+    merged.turnCosts.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  }
+  return merged;
 }
 
 function listCursor(folders) {
@@ -406,12 +519,15 @@ function snapshotTranscript(reader) {
     reader.filesStamp = reader.stamp;
   }
   const omitted = Math.max(0, turns.length - TURN_LIMIT);
+  const { subAccs, maxMtimeMs } = scanSubagentUsage(reader.filePath, null, reader.source);
+  const mergedUsage = mergeUsageStates(reader.usage, subAccs);
+  const effectiveMtime = Math.max(reader.mtime || 0, maxMtimeMs);
   return {
     title: reader.title,
     omitted,
     files: reader.cachedFiles,
     patches: reader.cachedPatches,
-    stats: resolveStats(reader.usage, reader.mtime),
+    stats: resolveStats(mergedUsage, effectiveMtime),
     turns: omitted ? turns.slice(turns.length - TURN_LIMIT) : turns.slice(),
   };
 }
@@ -643,14 +759,15 @@ function createUsageState() {
   };
 }
 
-function finalizeMeta(acc, stat) {
-  const stats = resolveStats(acc, stat.mtimeMs);
+function finalizeMeta(acc, stat, effectiveMtimeMs) {
+  const mtime = effectiveMtimeMs > stat.mtimeMs ? effectiveMtimeMs : stat.mtimeMs;
+  const stats = resolveStats(acc, mtime);
   return {
     title: acc.title,
     preview: acc.preview,
     cwd: acc.cwd,
     timestamp: acc.timestamp,
-    mtime: stat.mtimeMs,
+    mtime,
     size: stat.size,
     sidechain: acc.sidechain,
     ...stats,
@@ -854,6 +971,9 @@ function resolveStats(acc, fallbackMtime) {
       if (ts >= monthStart) monthWeight += weight;
       if (ts >= dayStart) todayWeight += weight;
       claudeWeights.push({ ts, weight });
+    }
+    if (claudeWeights.length > 1) {
+      claudeWeights.sort((a, b) => (a.ts || 0) - (b.ts || 0));
     }
   }
   const totalTokens = Math.max(acc.totalTokens || 0, acc.costStateTokens || 0, msgTokSum);

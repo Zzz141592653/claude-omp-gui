@@ -3,7 +3,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { hasConversationEntries, hasOmpProcess, hasClaudeProcess, loadTranscript } = require("../sources");
+const { hasConversationEntries, hasOmpProcess, hasClaudeProcess, loadTranscript, refreshSessionMeta } = require("../sources");
 
 test("a process exit record is not a new reply", () => {
   const entries = [
@@ -216,6 +216,103 @@ test("claude sessions resolve per-turn todayCost and contextWindow from cost-sta
     assert.equal(transcript.stats.cost, 0.35);
     assert.equal(transcript.stats.todayCost, 0.25);
     assert.deepEqual(transcript.stats.recentTurnCosts, [0.25]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("omp and claude sessions aggregate subagent jsonl usage and refresh when subagents grow", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-sessions-subagents-"));
+  try {
+    const now = new Date();
+    const t1 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 10, 0, 0).toISOString();
+    const t2 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 10, 5, 0).toISOString();
+    const t3 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 10, 10, 0).toISOString();
+
+    const ompParent = path.join(dir, "session-parent.jsonl");
+    const ompCompanion = path.join(dir, "session-parent");
+    fs.mkdirSync(ompCompanion, { recursive: true });
+    fs.writeFileSync(
+      ompParent,
+      [
+        JSON.stringify({ type: "title", title: "Parent Session" }),
+        JSON.stringify({
+          type: "message",
+          timestamp: t1,
+          message: {
+            role: "assistant",
+            provider: "vertex-proxy",
+            model: "gemini-4-argon",
+            content: [{ type: "text", text: "main turn" }],
+            duration: 2000,
+            ttft: 500,
+            usage: { input: 2000, output: 100, cacheRead: 8000, cacheWrite: 0, totalTokens: 10100, cost: { total: 0.84 } },
+            contextSnapshot: { promptTokens: 10000 },
+          },
+        }),
+      ].join("\n") + "\n",
+    );
+    const sub1 = path.join(ompCompanion, "SolverAgent.jsonl");
+    fs.writeFileSync(
+      sub1,
+      JSON.stringify({
+        type: "message",
+        timestamp: t2,
+        message: {
+          role: "assistant",
+          provider: "vertex-proxy",
+          model: "gemini-4-argon",
+          content: [{ type: "text", text: "sub1 turn" }],
+          duration: 3000,
+          ttft: 700,
+          usage: { input: 500, output: 150, cacheRead: 1500, cacheWrite: 0, totalTokens: 2150, cost: { total: 0.35 } },
+          contextSnapshot: { promptTokens: 2000 },
+        },
+      }) + "\n",
+    );
+
+    const ompSession = { source: "omp", filePath: ompParent };
+    refreshSessionMeta(ompSession);
+    assert.equal(ompSession.title, "Parent Session");
+    assert.equal(ompSession.contextTokens, 10000);
+    assert.equal(ompSession.totalTokens, 12250);
+    assert.equal(ompSession.outputTokens, 250);
+    assert.equal(ompSession.cost, 1.19);
+    assert.equal(ompSession.todayCost, 1.19);
+    assert.equal(ompSession.turnCount, 2);
+    assert.deepEqual(ompSession.recentTurnCosts, [0.84, 0.35]);
+
+    const sub2 = path.join(ompCompanion, "CancellationDecompilerAgent.jsonl");
+    fs.writeFileSync(
+      sub2,
+      JSON.stringify({
+        type: "message",
+        timestamp: t3,
+        message: {
+          role: "assistant",
+          provider: "vertex-proxy",
+          model: "gemini-4-argon",
+          content: [{ type: "text", text: "sub2 turn" }],
+          duration: 5000,
+          ttft: 900,
+          usage: { input: 400, output: 250, cacheRead: 1000, cacheWrite: 0, totalTokens: 1650, cost: { total: 0.2 } },
+          contextSnapshot: { promptTokens: 1400 },
+        },
+      }) + "\n",
+    );
+
+    refreshSessionMeta(ompSession);
+    assert.equal(ompSession.contextTokens, 10000);
+    assert.equal(ompSession.totalTokens, 13900);
+    assert.equal(ompSession.outputTokens, 500);
+    assert.equal(ompSession.cost, 1.39);
+    assert.equal(ompSession.turnCount, 3);
+    assert.deepEqual(ompSession.recentTurnCosts, [0.84, 0.35, 0.2]);
+
+    const ompLoaded = loadTranscript(ompParent, "omp");
+    assert.equal(ompLoaded.stats.cost, 1.39);
+    assert.equal(ompLoaded.stats.totalTokens, 13900);
+    assert.equal(ompLoaded.stats.contextTokens, 10000);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
