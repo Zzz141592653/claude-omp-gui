@@ -14,6 +14,7 @@ const state = {
   transcript: null,
   canReply: false,
   replying: false,
+  copyingReply: false,
   diffMode: "split",
   diffData: null,
   showHidden: false,
@@ -53,8 +54,12 @@ const replyForm = document.querySelector("#reply");
 const replyText = document.querySelector("#reply-text");
 const replyNotice = document.querySelector("#reply-notice");
 const replySend = document.querySelector("#reply-send");
+const replyCopy = document.querySelector("#reply-copy");
 const threadResume = document.querySelector("#thread-resume");
 const replyResume = document.querySelector("#reply-resume");
+replyCopy?.addEventListener("click", () => {
+  copyReply();
+});
 threadResume?.addEventListener("click", () => {
   if (state.selected) vscode.postMessage({ type: "resumeSession", key: state.selected });
 });
@@ -163,7 +168,9 @@ window.addEventListener("message", (event) => {
     state.transcript = message.transcript;
     if (message.following != null) state.following = message.following === true;
     if (message.canReply != null) state.canReply = message.canReply === true;
-    if (message.replyHint) replyNotice.textContent = message.replyHint;
+    if (message.replyHint && (switched || (!state.replying && !state.copyingReply && !message.live))) {
+      replyNotice.textContent = message.replyHint;
+    }
     renderList();
     renderThread(message.live ? "live" : "open");
     updateReply();
@@ -176,13 +183,19 @@ window.addEventListener("message", (event) => {
   if (message.type === "replyResult") {
     state.replying = false;
     replyNotice.textContent = message.notice || "";
-    if (message.ok) replyText.value = "";
+    if (message.ok && message.sent === true) replyText.value = "";
+    updateReply();
+    return;
+  }
+  if (message.type === "replyCopyResult") {
+    state.copyingReply = false;
+    replyNotice.textContent = message.notice || "";
     updateReply();
     return;
   }
   if (message.type === "replyState") {
     state.canReply = message.canReply === true;
-    if (!state.replying && message.replyHint) replyNotice.textContent = message.replyHint;
+    if (!state.replying && !state.copyingReply && message.replyHint) replyNotice.textContent = message.replyHint;
     updateReply();
     return;
   }
@@ -307,7 +320,7 @@ function selectFocusedField() {
 
 function sendReply() {
   const text = replyText.value.trim();
-  if (!text || !state.canReply || state.replying) return;
+  if (!text || !state.canReply || state.replying || state.copyingReply) return;
   state.replying = true;
   updateReply();
   const selected = state.sessions.find((item) => item.key === state.selected);
@@ -316,8 +329,19 @@ function sendReply() {
   vscode.postMessage({ type: "reply", text });
 }
 
+function copyReply() {
+  const text = replyText.value;
+  if (!text.trim() || state.replying || state.copyingReply) return;
+  state.copyingReply = true;
+  updateReply();
+  vscode.postMessage({ type: "copyReply", text });
+}
+
 function updateReply() {
-  replySend.disabled = !state.canReply || state.replying || !replyText.value.trim();
+  const hasDraft = Boolean(replyText.value.trim());
+  const busy = state.replying || state.copyingReply;
+  replySend.disabled = !state.canReply || busy || !hasDraft;
+  if (replyCopy) replyCopy.disabled = busy || !hasDraft;
   const hasSession = Boolean(state.selected);
   if (replyResume) replyResume.hidden = !hasSession || state.canReply;
   if (threadResume) {

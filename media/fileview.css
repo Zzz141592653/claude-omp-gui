@@ -30,6 +30,7 @@ body {
 header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--vscode-panel-border);
@@ -37,7 +38,7 @@ header {
 
 #file { font-weight: 600; }
 #session {
-  flex: 1;
+  flex: 1 1 120px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -68,6 +69,8 @@ header {
 }
 
 button {
+  flex: none;
+  white-space: nowrap;
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;

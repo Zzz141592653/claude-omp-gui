@@ -17,7 +17,9 @@ Opening each one to see whether it answered is the slow part. The list marks the
 
 ![One session is still running, one has a new reply, and the reply shows the files it changed.](docs/images/library.png)
 
-The follow-up goes in the box at the bottom. When the OMP or Claude Code window is still open, **Send** pastes it there, so you can answer the session you are reading; if the terminal was already closed, click **Resume in Terminal** to reopen that exact session (`omp -r` or `claude --resume`) in a Cursor integrated terminal inside its original project directory. Mermaid diagrams, `svg` blocks, and numeric Markdown tables render inline with interactive full-screen zoom and pan. Under the reply, the files that turn changed are listed, and Diff opens the change in the panel before you answer.
+The follow-up goes in the box at the bottom. **Send** pastes it into the session's open terminal; **Copy reply** copies the draft for manual pasting without clearing it. If the terminal was already closed, click **Resume in Terminal** to reopen that exact session (`omp -r` or `claude --resume`) in a Cursor integrated terminal inside its original project directory. Mermaid diagrams, `svg` blocks, and numeric Markdown tables render inline with interactive full-screen zoom and pan. Under the reply, the files that turn changed are listed, and Diff opens the change in the panel before you answer.
+
+Automatic sending supports **Cursor integrated terminals** and, on macOS, **Terminal.app** and **iTerm2**. **Warp and other external terminals are not supported for automatic sending**: use **Copy reply** or **Copy comments** and paste into the intended terminal yourself. Failed sends keep your draft and current review comments. To move an externally running session into Cursor, stop the original session before using **Resume in Terminal** so it is not running in two terminals at once.
 
 **This workspace** keeps the list to the repo you have open. Sessions from other directories show up under **All workspaces**. A draggable mascot widget in the corner shows **Today** and **Month** spend for OMP and Claude Code with per-call `↑ +$0.xxx` floating toasts (right-click it to switch characters, pick a custom image, or minimize it).
 
@@ -25,9 +27,9 @@ The follow-up goes in the box at the bottom. When the OMP or Claude Code window 
 
 Telling the agent "look at the file" leaves it to guess which sentence you mean. Select the passage and choose **Comment**. The highlight and the quoted text stay put, so you can step away and still see what the note is about.
 
-![A saved comment on one highlighted phrase, and a second comment being written while that selection stays highlighted.](docs/images/review.png)
+![A saved file review comment with its quoted selection and a Copy comments action for manual pasting.](docs/images/review.png)
 
-**Send to this turn** pastes this review into the open OMP window. Once you send it, or once you open the file again after the agent has changed it, the next review starts empty, so an old note is not sent again as if it were about the new text. The earlier review stays in the **Review** menu, and **View changes** shows what happened to the file since that pass.
+**Send to this turn** pastes this review into the open OMP or Claude Code terminal. **Copy comments** copies the current review's quoted selections and comments without closing the review or marking it as sent. Once a send succeeds, or once you open the file again after the agent has changed it, the next review starts empty, so an old note is not sent again as if it were about the new text. The earlier review stays in the **Review** menu, and **View changes** shows what happened to the file since that pass.
 
 ## Install
 

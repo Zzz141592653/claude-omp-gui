@@ -2,6 +2,7 @@ const vscode = acquireVsCodeApi();
 const fileEl = document.getElementById("file");
 const sessionEl = document.getElementById("session");
 const sendEl = document.getElementById("send");
+const copyEl = document.getElementById("copy-comments");
 const resumeEl = document.getElementById("resume");
 const diffEl = document.getElementById("diff");
 const noticeEl = document.getElementById("notice");
@@ -43,6 +44,7 @@ window.addEventListener("message", (event) => {
   if (typeof vscode.setState === "function") vscode.setState({ fileName: state.fileName });
   noticeEl.textContent = state.notice;
   sendEl.disabled = !state.canSend;
+  if (copyEl) copyEl.disabled = !state.canCopy;
   if (resumeEl) resumeEl.hidden = !state.canResume;
   diffEl.disabled = !state.canDiff;
   reviewVersionId = state.versionId || "";
@@ -88,6 +90,7 @@ window.addEventListener("message", (event) => {
 });
 
 resumeEl?.addEventListener("click", () => vscode.postMessage({ type: "resume" }));
+copyEl?.addEventListener("click", () => vscode.postMessage({ type: "copyComments" }));
 sendEl.addEventListener("click", () => vscode.postMessage({ type: "send" }));
 diffEl.addEventListener("click", () => vscode.postMessage({ type: "diff" }));
 versionEl.addEventListener("change", () => vscode.postMessage({ type: "showVersion", id: versionEl.value }));

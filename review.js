@@ -197,7 +197,14 @@ class FileView {
       }
       return;
     }
-    if (message.type === "send") await this.send();
+    if (message.type === "send") {
+      await this.send();
+      return;
+    }
+    if (message.type === "copyComments") {
+      await this.copyComments();
+      return;
+    }
     if (message.type === "resume") {
       if (!this.record.session) return;
       try {
@@ -232,6 +239,24 @@ class FileView {
     return versions.length ? versions[versions.length - 1].snapshot : "";
   }
 
+  async copyComments() {
+    if (this.viewing) return;
+    const prompt = formatReviewComments(this.record.current.comments);
+    if (!prompt) return;
+    try {
+      if (!vscode.env?.clipboard?.writeText) {
+        throw new Error("Clipboard is not available.");
+      }
+      await vscode.env.clipboard.writeText(prompt);
+      this.notice = "Copied comments to the clipboard. Paste them into your terminal manually.";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.notice = message || "Could not copy comments to the clipboard.";
+      void vscode.window.showErrorMessage?.(this.notice);
+    }
+    await this.post(false);
+  }
+
   async send() {
     const session = this.record.session;
     const comments = this.record.current.comments;
@@ -239,23 +264,23 @@ class FileView {
     const source = fs.readFileSync(this.file, "utf8");
     const tty = liveTty(session);
     if (!tty) {
-      void vscode.window.showWarningMessage("That window is not open. Open it in the terminal before sending comments.");
+      const message = "That window is not open. Open it in the terminal before sending comments.";
+      this.notice = message;
+      void vscode.window.showWarningMessage(message);
+      await this.post(false);
       return;
     }
     ensureSnapshot(this.context, this.file, this.record, source);
-    const prompt = comments
-      .map((item) => {
-        const excerpt = item.excerpt || item.quote || "";
-        return `Selection:\n> ${excerpt.replace(/\n/g, "\n> ")}\n\nComment: ${item.body}`;
-      })
-      .join("\n\n");
+    const prompt = formatReviewComments(comments);
     try {
       await pasteIntoTerminal(tty, prompt);
       closeRound(this.record, source);
       this.viewing = "";
       this.notice = "Pasted into the open window. Switch back to see the comments and what follows.";
     } catch (error) {
-      void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      this.notice = message;
+      void vscode.window.showErrorMessage(message);
     }
     await writeRecord(this.context, this.file, this.record);
     await this.post(false);
@@ -307,6 +332,7 @@ class FileView {
       versionId,
       sessionLabel: label,
       canSend: Boolean(!versionId && tty && this.record.current.comments.length),
+      canCopy: Boolean(!versionId && this.record.current.comments.length),
       canResume: Boolean(session && !tty && buildResumeCommand(session)),
       canDiff: Boolean(snapshotPath && fs.existsSync(snapshotPath)),
       notice,
@@ -506,6 +532,21 @@ async function resumeSessionInTerminal(session, vscodeApi = vscode) {
   return { terminal, command, reused: false };
 }
 
+function formatReviewComments(comments) {
+  if (!Array.isArray(comments) || !comments.length) return "";
+  return comments
+    .map((item) => {
+      const excerpt = item.excerpt || item.quote || "";
+      return `Selection:\n> ${excerpt.replace(/\n/g, "\n> ")}\n\nComment: ${item.body}`;
+    })
+    .join("\n\n");
+}
+
+function unsupportedTerminalMessage(host) {
+  const target = host ? `${host}` : "this terminal";
+  return `Automatic sending to ${target} is not supported. Copy and paste manually, or stop the original session before using Resume in Terminal.`;
+}
+
 async function pasteIntoTerminal(tty, prompt, vscodeApi = vscode) {
   const integrated = await findIntegratedTerminalByTty(tty, vscodeApi);
   if (integrated) {
@@ -514,6 +555,9 @@ async function pasteIntoTerminal(tty, prompt, vscodeApi = vscode) {
     return;
   }
   const host = terminalHost(tty);
+  if (host !== "iTerm2" && host !== "Terminal") {
+    throw new Error(unsupportedTerminalMessage(host));
+  }
   const promptPath = path.join(os.tmpdir(), `agent-sessions-prompt-${crypto.randomUUID()}.txt`);
   fs.writeFileSync(promptPath, prompt);
   const script = host === "iTerm2" ? itermPasteScript : terminalPasteScript;
@@ -537,30 +581,60 @@ async function pasteIntoTerminal(tty, prompt, vscodeApi = vscode) {
   });
 }
 
+function hostFromCommand(command) {
+  const trimmed = String(command || "").trim();
+  if (!trimmed) return "";
+  if (/^(?:\/\S+)*\/Library\/Application Support\/iTerm2\/iTermServer(?:\b|[-.])/i.test(trimmed)) {
+    return "iTerm2";
+  }
+  if (/^(?:\/[^\s"']*)*\/Warp Preview\.app\/Contents\/MacOS\/[^\s/]+/i.test(trimmed)) {
+    return "Warp";
+  }
+  const executable = trimmed.split(/\s+/)[0] || "";
+  if (!executable) return "";
+  if (/(?:^|\/)iTerm2?\.app\/Contents\/MacOS\/[^/]+$/i.test(executable)) return "iTerm2";
+  if (/(?:^|\/)Terminal\.app\/Contents\/MacOS\/Terminal$/i.test(executable)) return "Terminal";
+  if (/(?:^|\/)Warp(?:Preview)?\.app\/Contents\/MacOS\/[^/]+$/i.test(executable)) return "Warp";
+  const base = path.basename(executable);
+  if (/^(?:iTerm2|iTermServer(?:[-.][\w.-]+)?)$/i.test(base)) return "iTerm2";
+  if (/^(?:warp|warp-terminal|warppreview|warp_terminal)$/i.test(base)) return "Warp";
+  return "";
+}
+
 function terminalHost(tty) {
   const name = path.basename(String(tty || ""));
-  let pid = "";
+  if (!name) return "";
+  let pids = [];
   try {
-    pid = execFileSync("ps", ["-t", name, "-o", "pid="], { encoding: "utf8" }).trim().split("\n")[0].trim();
+    pids = execFileSync("ps", ["-t", name, "-o", "pid="], { encoding: "utf8" })
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
   } catch {
-    return "Terminal";
+    return "";
   }
+  if (!pids.length) return "";
   const seen = new Set();
-  while (pid && pid !== "0" && pid !== "1" && !seen.has(pid)) {
-    seen.add(pid);
-    let row = "";
-    try {
-      row = execFileSync("ps", ["-p", pid, "-o", "ppid=,command="], { encoding: "utf8" });
-    } catch {
-      break;
+  for (const startPid of pids) {
+    let pid = startPid;
+    while (pid && pid !== "0" && pid !== "1" && !seen.has(pid)) {
+      seen.add(pid);
+      let row = "";
+      try {
+        row = execFileSync("ps", ["-p", pid, "-o", "ppid=,command="], { encoding: "utf8" });
+      } catch {
+        break;
+      }
+      const match = /^\s*(\d+)\s+(.+)$/.exec(row.trim());
+      if (!match) break;
+      const [, parent, command] = match;
+      const host = hostFromCommand(command);
+      if (host) return host;
+      if (!parent || parent === pid) break;
+      pid = parent;
     }
-    if (/iTerm/i.test(row)) return "iTerm2";
-    if (/Terminal\.app/i.test(row)) return "Terminal";
-    const parent = row.trim().split(/\s+/)[0];
-    if (!parent || parent === pid) break;
-    pid = parent;
   }
-  return "Terminal";
+  return "";
 }
 
 const itermPasteScript = `
@@ -1024,6 +1098,7 @@ ${katexCss}
   </div>
   <button id="resume" type="button" hidden>Resume in Terminal</button>
   <button id="send" type="button">Send to this turn</button>
+  <button id="copy-comments" type="button">Copy comments</button>
   <button id="diff" type="button">View changes</button>
 </header>
 <p id="notice"></p>
@@ -1067,4 +1142,4 @@ ${mermaid}
 </html>`;
 }
 
-module.exports = { openReviewedFile, reviveReviewedFilePanel, liveTty, hasOmpProcess, pasteIntoTerminal, buildResumeCommand, resumeSessionInTerminal, noteInputFocus, selectAllInInput, focusFindInFileView };
+module.exports = { openReviewedFile, reviveReviewedFilePanel, liveTty, hasOmpProcess, pasteIntoTerminal, terminalHost, buildResumeCommand, resumeSessionInTerminal, noteInputFocus, selectAllInInput, focusFindInFileView };

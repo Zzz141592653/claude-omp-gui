@@ -274,10 +274,11 @@ mark.hit.current { background: var(--vscode-editor-findMatchBackground, #f59e0b)
   cursor: pointer;
   white-space: nowrap;
 }
-.resume-btn:hover {
+.resume-btn:not(:disabled):hover {
   background: color-mix(in srgb, var(--vscode-button-background, #0d9488) 18%, var(--soft));
   border-color: color-mix(in srgb, var(--vscode-button-background, #0d9488) 45%, var(--line));
 }
+.resume-btn:disabled { opacity: 0.45; cursor: default; }
 .resume-btn[hidden] { display: none; }
 .thread-head .meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
 .files {
@@ -373,8 +374,8 @@ mark.hit.current { background: var(--vscode-editor-findMatchBackground, #f59e0b)
   color: var(--vscode-input-foreground);
   font: inherit;
 }
-.reply-row { display: flex; align-items: center; gap: 12px; }
-#reply-notice { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; }
+.reply-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#reply-notice { flex: 1 1 220px; min-width: 0; color: var(--muted); font-size: 12px; }
 #reply-send {
   flex: none;
   border: 0;
@@ -382,6 +383,7 @@ mark.hit.current { background: var(--vscode-editor-findMatchBackground, #f59e0b)
   padding: 6px 14px;
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
+  white-space: nowrap;
 }
 #reply-send:disabled { opacity: 0.45; cursor: default; }
 .thread {

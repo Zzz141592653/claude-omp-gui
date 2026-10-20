@@ -1,3 +1,12 @@
+# 1.5.8
+
+Since 1.5.7.
+
+- Stop routing Warp, unsupported external terminals, and unidentified terminal hosts to macOS Terminal.app. Automatic sending now stops safely with manual-copy guidance instead of searching the wrong application's tabs.
+- Add **Copy reply** and **Copy comments** for manual pasting, including when automatic sending is unavailable. Failed sends and clipboard errors keep the reply draft and current review comments; copying does not mark comments as sent.
+- Preserve reply drafts when focusing or resuming a session in the integrated terminal. Only a successful reply send clears the draft.
+- Document automatic-send support for Cursor integrated terminals, macOS Terminal.app, and iTerm2; Warp automatic sending is not supported in this release.
+
 # 1.5.7
 
 Since 1.5.6.

@@ -125,7 +125,8 @@ function adoptLibraryPanel(context, targetPanel) {
       postSessions();
     }
     if (message.type === "openLink") openLink(message.href);
-    if (message.type === "reply") replyToSession(message.text);
+    if (message.type === "reply") void replyToSession(message.text);
+    if (message.type === "copyReply") void copyReplyToClipboard(message.text);
     if (message.type === "resumeSession") void resumeSession(message.key || openKey);
     if (message.type === "fileDiff") postFileDiff(message.path);
     if (message.type === "hide") hideSession(message.key);
@@ -363,6 +364,7 @@ function postTranscript(session, options) {
     });
     return;
   }
+  postedReply = `${session.key}\n${reply.canReply}\n${reply.hint}`;
   panel.webview.postMessage({
     type: "transcript",
     key: session.key,
@@ -444,16 +446,49 @@ async function replyToSession(text) {
   const session = sessions.find((item) => item.key === openKey);
   const reply = replyState(session);
   if (!reply.canReply) {
-    panel.webview.postMessage({ type: "replyResult", ok: false, notice: reply.hint });
+    panel.webview.postMessage({ type: "replyResult", ok: false, sent: false, notice: reply.hint });
     return;
   }
   const label = session.sourceLabel || (session.source === "claude" ? "Claude Code" : "OMP");
   try {
     await pasteIntoTerminal(liveTty(session), body);
-    panel.webview.postMessage({ type: "replyResult", ok: true, notice: `Sent to the open ${label} window.` });
+    panel.webview.postMessage({
+      type: "replyResult",
+      ok: true,
+      sent: true,
+      notice: `Sent to the open ${label} window.`,
+    });
   } catch (error) {
     panel.webview.postMessage({
       type: "replyResult",
+      ok: false,
+      sent: false,
+      notice: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function copyReplyToClipboard(text) {
+  if (!panel) return;
+  const raw = String(text ?? "");
+  if (!raw.trim()) {
+    panel.webview.postMessage({
+      type: "replyCopyResult",
+      ok: false,
+      notice: "Write a reply before copying.",
+    });
+    return;
+  }
+  try {
+    await vscode.env.clipboard.writeText(raw);
+    panel.webview.postMessage({
+      type: "replyCopyResult",
+      ok: true,
+      notice: "Copied reply to clipboard. Paste it into your terminal window.",
+    });
+  } catch (error) {
+    panel.webview.postMessage({
+      type: "replyCopyResult",
       ok: false,
       notice: error instanceof Error ? error.message : String(error),
     });
@@ -473,13 +508,19 @@ async function resumeSession(key) {
     setTimeout(() => postReplyState(), 1200);
     setTimeout(() => postReplyState(), 3000);
     if (panel && openKey === session.key) {
-      panel.webview.postMessage({ type: "replyResult", ok: true, notice: `Opened ${label} session in the integrated terminal.` });
+      panel.webview.postMessage({
+        type: "replyResult",
+        ok: true,
+        sent: false,
+        notice: `Opened ${label} session in the integrated terminal.`,
+      });
     }
   } catch (error) {
     if (panel) {
       panel.webview.postMessage({
         type: "replyResult",
         ok: false,
+        sent: false,
         notice: error instanceof Error ? error.message : String(error),
       });
     }
@@ -1322,6 +1363,7 @@ function htmlFor(context, webview) {
       <div class="reply-row">
         <span id="reply-notice">Select a session from the list.</span>
         <button id="reply-resume" class="resume-btn" type="button" hidden title="Reopen this session in a Cursor integrated terminal">Resume in Terminal</button>
+        <button id="reply-copy" class="resume-btn" type="button" disabled title="Copy this reply to the clipboard">Copy reply</button>
         <button id="reply-send" type="submit">Send</button>
       </div>
     </form>
