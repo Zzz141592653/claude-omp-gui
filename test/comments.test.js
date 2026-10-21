@@ -120,7 +120,10 @@ test("openReviewedFile creates FileView with search bar, focusFindInFileView, an
     const { openReviewedFile, focusFindInFileView } = require("../review");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-sessions-review-"));
     const mdFile = path.join(tmpDir, "note.md");
-    fs.writeFileSync(mdFile, "以**哥伦比娅（少女）**为核心：$\\frac{125\\%}{160\\%} = \\mathbf{78.125\\%}$\n");
+    fs.writeFileSync(
+      mdFile,
+      "以**哥伦比娅（少女）**为核心：$\\frac{125\\%}{160\\%} = \\mathbf{78.125\\%}$\n\n```js\nconst answer = '42';\n```\n",
+    );
     const ctx = {
       extensionPath: path.resolve(__dirname, ".."),
       globalStorageUri: { fsPath: tmpDir },
@@ -133,6 +136,8 @@ test("openReviewedFile creates FileView with search bar, focusFindInFileView, an
     }
     assert.ok(stateMsg?.html.includes("<strong>哥伦比娅（少女）</strong>"));
     assert.ok(stateMsg?.html.includes("class=\"katex\""));
+    assert.ok(stateMsg?.html.includes("class=\"hljs-keyword\""));
+    assert.ok(stateMsg?.html.includes("class=\"hljs-string\""));
     assert.equal(focusFindInFileView(), true);
     assert.ok(postedMessages.some((m) => m.type === "focusFind"));
     fs.rmSync(tmpDir, { recursive: true, force: true });

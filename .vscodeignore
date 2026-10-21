@@ -8,3 +8,7 @@ ROADMAP.md
 .gitignore
 test/**
 docs/**
+node_modules/@highlightjs/cdn-assets/es/**
+node_modules/@highlightjs/cdn-assets/languages/**
+node_modules/@highlightjs/cdn-assets/styles/**
+node_modules/@highlightjs/cdn-assets/highlight.js

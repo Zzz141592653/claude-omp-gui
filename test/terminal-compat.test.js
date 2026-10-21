@@ -146,3 +146,33 @@ test("review failures and copying keep comments open; successful sending alone c
   await onMessage({ type: "copyComments" });
   assert.equal(clipboard, "do not replace", "archived comments must not be copied as the current review");
 });
+
+test("iTerm2 pasteIntoTerminal writes directly to the matched session without System Events keystroke paste", async () => {
+  let spawnedArgs = null;
+  const vscode = { window: { terminals: [] } };
+  const childProcess = {
+    execFileSync(cmd, args) {
+      if (cmd === "ps" && args[0] === "-t") return "111\n";
+      if (cmd === "ps" && args[0] === "-p") return "1 /Applications/iTerm.app/Contents/MacOS/iTerm2\n";
+      return "";
+    },
+    spawn(cmd, args) {
+      spawnedArgs = { cmd, args };
+      return {
+        stderr: { on() {} },
+        on(event, cb) {
+          if (event === "close") setImmediate(() => cb(0));
+        },
+        kill() {},
+      };
+    },
+  };
+  const review = loadReview(vscode, childProcess);
+  await review.pasteIntoTerminal("/dev/ttys004", "hello multi-window iterm", vscode);
+  assert.equal(spawnedArgs?.cmd, "osascript");
+  const script = spawnedArgs?.args?.[1] || "";
+  assert.match(script, /set index of targetWindow to 1/);
+  assert.match(script, /set frontmost of targetWindow to true/);
+  assert.match(script, /tell targetSession[\s\S]*write text/);
+  assert.doesNotMatch(script, /keystroke "v" using command down/);
+});

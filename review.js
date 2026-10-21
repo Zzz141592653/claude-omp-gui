@@ -6,6 +6,7 @@ const { spawn, execFileSync } = require("child_process");
 const vscode = require("vscode");
 const MarkdownIt = require("markdown-it");
 const katex = require("katex");
+const hljs = require("@highlightjs/cdn-assets/highlight.min.js");
 
 const { normalizeRecord, openRound, noteLiveFile, closeRound, hashText } = require("./comments");
 const { panelIsOpen, releaseClosedPanel } = require("./panel-life");
@@ -641,41 +642,45 @@ const itermPasteScript = `
 on run argv
   set ttyName to item 1 of argv
   set promptText to read POSIX file (item 2 of argv) as «class utf8»
+  set esc to ASCII character 27
   tell application "iTerm2"
-    set found to false
+    activate
+    set targetWindow to missing value
+    set targetTab to missing value
+    set targetSession to missing value
     repeat with w in windows
       repeat with t in tabs of w
         repeat with s in sessions of t
           set tabTty to tty of s as text
           if tabTty is ttyName or tabTty is ("/dev/" & ttyName) or ("/dev/" & tabTty) is ttyName then
-            select w
-            select t
-            select s
-            set found to true
+            set targetWindow to w
+            set targetTab to t
+            set targetSession to s
             exit repeat
           end if
         end repeat
-        if found then exit repeat
+        if targetSession is not missing value then exit repeat
       end repeat
-      if found then exit repeat
+      if targetSession is not missing value then exit repeat
     end repeat
-    if found is false then error "Could not find the iTerm tab for this session"
-    activate
-  end tell
-  set oldClip to the clipboard
-  set the clipboard to promptText
-  delay 0.35
-  tell application "System Events"
-    tell process "iTerm2"
-      set frontmost to true
-      keystroke "v" using command down
-      delay 0.25
-      key code 36
+    if targetSession is missing value then error "Could not find the iTerm tab for this session"
+    try
+      set index of targetWindow to 1
+    end try
+    try
+      set frontmost of targetWindow to true
+    end try
+    select targetWindow
+    select targetTab
+    select targetSession
+    tell targetSession
+      write text (esc & "[200~" & promptText & esc & "[201~") newline no
+    end tell
+    delay 0.15
+    tell targetSession
+      write text ""
     end tell
   end tell
-  try
-    set the clipboard to oldClip
-  end try
 end run
 `;
 
@@ -966,8 +971,21 @@ function renderKatexHtml(latex, displayMode) {
   }
 }
 
+function highlightCode(str, lang) {
+  const clean = String(lang || "").trim().split(/\s+/)[0].toLowerCase();
+  if (!clean || clean === "mermaid" || clean === "svg" || clean === "math" || clean === "latex") return "";
+  if (hljs && typeof hljs.getLanguage === "function" && hljs.getLanguage(clean)) {
+    try {
+      return hljs.highlight(str, { language: clean, ignoreIllegals: true }).value;
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 function createMarkdownEngine() {
-  const engine = new MarkdownIt({ html: false, linkify: true, breaks: false });
+  const engine = new MarkdownIt({ html: false, linkify: true, breaks: false, highlight: highlightCode });
   const origScanDelims = engine.inline.State.prototype.scanDelims;
   engine.inline.State.prototype.scanDelims = function (start, canSplitWord) {
     const res = origScanDelims.call(this, start, canSplitWord);
@@ -995,6 +1013,18 @@ function createMarkdownEngine() {
     return renderKatexHtml(content, displayMode);
   };
   engine.renderer.rules.math_block = (tokens, idx) => `<div class="katex-block">${renderKatexHtml(tokens[idx].content, true)}</div>\n`;
+  const origFence = engine.renderer.rules.fence;
+  engine.renderer.rules.fence = function (tokens, idx, options, env, self) {
+    const token = tokens[idx];
+    const lang = (token.info || "").trim().split(/\s+/)[0].toLowerCase();
+    if (lang === "math" || lang === "latex") {
+      return `<div class="katex-block">${renderKatexHtml(token.content, true)}</div>\n`;
+    }
+    if (lang === "mermaid" || lang === "svg") {
+      return `<pre><code class="language-${lang}">${escapeHtml(token.content.replace(/\n$/, ""))}</code></pre>\n`;
+    }
+    return origFence ? origFence.call(this, tokens, idx, options, env, self) : `<pre><code>${escapeHtml(token.content)}</code></pre>\n`;
+  };
   return engine;
 }
 

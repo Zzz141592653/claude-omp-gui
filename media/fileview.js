@@ -730,28 +730,53 @@ function renderSvgBlocks(root) {
   }
 }
 
+function normalizeMermaidThemeColors(source, isDark) {
+  return String(source || "").replace(
+    /^(\s*rect\s+)rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([0-9.]+))?\s*\)/gim,
+    (match, prefix, rStr, gStr, bStr, aStr) => {
+      const r = Number(rStr);
+      const g = Number(gStr);
+      const b = Number(bStr);
+      const a = aStr !== undefined ? Number(aStr) : 1;
+      if (a <= 0.25) return match;
+      const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      if (!isDark && lum < 0.45) {
+        const lift = (c) => Math.max(232, Math.min(248, 255 - Math.round(c * 0.35)));
+        return `${prefix}rgb(${lift(r)}, ${lift(g)}, ${lift(b)})`;
+      }
+      if (isDark && lum > 0.6) {
+        const dim = (c) => Math.max(28, Math.min(48, 255 - Math.round(c * 0.85)));
+        return `${prefix}rgb(${dim(r)}, ${dim(g)}, ${dim(b)})`;
+      }
+      return match;
+    },
+  );
+}
+
 function renderDiagrams(root) {
   renderSvgBlocks(root);
   const token = ++diagramToken;
   if (!window.mermaid) return;
   const blocks = [...root.querySelectorAll("pre > code.language-mermaid")];
   if (!blocks.length) return;
-  if (!renderDiagrams.ready) {
-    const color = getComputedStyle(document.body).backgroundColor;
-    const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-    const lum = match ? (0.2126 * Number(match[1]) + 0.7152 * Number(match[2]) + 0.0722 * Number(match[3])) / 255 : 1;
+  const color = getComputedStyle(document.body).backgroundColor;
+  const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  const lum = match ? (0.2126 * Number(match[1]) + 0.7152 * Number(match[2]) + 0.0722 * Number(match[3])) / 255 : 1;
+  const isDark = lum < 0.5;
+  if (!renderDiagrams.ready || renderDiagrams.isDark !== isDark) {
     window.mermaid.initialize({
       startOnLoad: false,
       securityLevel: "antiscript",
       htmlLabels: true,
       fontFamily: getComputedStyle(document.body).fontFamily || "sans-serif",
-      theme: lum < 0.5 ? "dark" : "default",
+      theme: isDark ? "dark" : "default",
     });
     renderDiagrams.ready = true;
+    renderDiagrams.isDark = isDark;
   }
   blocks.forEach((code, index) => {
     const pre = code.parentElement;
-    const source = code.textContent || "";
+    const source = normalizeMermaidThemeColors(code.textContent || "", isDark);
     window.mermaid.render(`mmd${token}x${index}`, source).then((result) => {
       if (token !== diagramToken || !pre.isConnected) return;
       const host = document.createElement("div");

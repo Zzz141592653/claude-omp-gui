@@ -1,3 +1,12 @@
+# 1.5.9
+
+Since 1.5.8.
+
+- Fix per-line inline background strips and text tint on `<pre><code>` blocks caused by Cursor/VS Code Webview `_defaultStyles` (`code { background-color: var(--vscode-textPreformat-background); color: var(--vscode-textPreformat-foreground) }`), and unify Markdown code block, inline code, blockquote, and link styles across the Session Library (`media/panel.css`) and File Review (`media/fileview.css`).
+- Add `highlight.js` syntax highlighting (`@highlightjs/cdn-assets`) for fenced code blocks in both session chat threads and Markdown file previews, with light and dark theme token palettes.
+- Fix iTerm2 reply and comment sending across multiple iTerm2 windows/Spaces: send prompts directly to the matched `PTYSession` via iTerm2's native `write text` AppleScript command (wrapped in bracketed paste without touching the system clipboard or relying on blind `System Events` `Cmd+V` keystrokes) and raise `targetWindow` (`index = 1`, `frontmost = true`) after activation.
+- Normalize hardcoded dark/light `rect rgb(...)` / `rect rgba(...)` backgrounds in Mermaid `sequenceDiagram` blocks so dark rects remain readable in light themes and light rects remain readable in dark themes.
+
 # 1.5.8
 
 Since 1.5.7.

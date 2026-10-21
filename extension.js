@@ -1294,6 +1294,8 @@ function htmlFor(context, webview) {
   const katexCss = katexCssSrc ? `<link rel="stylesheet" href="${katexCssSrc}" />` : "";
   const markdownItSrc = webviewAssetUri(context, webview, "node_modules", "markdown-it", "dist", "markdown-it.min.js");
   const markdownIt = markdownItSrc ? `<script nonce="${nonce}" src="${markdownItSrc}"></script>` : "";
+  const hljsSrc = webviewAssetUri(context, webview, "node_modules", "@highlightjs", "cdn-assets", "highlight.min.js");
+  const hljsJs = hljsSrc ? `<script nonce="${nonce}" src="${hljsSrc}"></script>` : "";
   const katexJsSrc = webviewAssetUri(context, webview, "node_modules", "katex", "dist", "katex.min.js");
   const katexJs = katexJsSrc ? `<script nonce="${nonce}" src="${katexJsSrc}"></script>` : "";
   const mermaidSrc = webviewAssetUri(context, webview, "media", "mermaid.min.js");
@@ -1384,6 +1386,7 @@ function htmlFor(context, webview) {
     <div id="diagram-stage"></div>
   </div>
   ${markdownIt}
+  ${hljsJs}
   ${katexJs}
   ${mermaid}
   ${ompCharts}
