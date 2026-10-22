@@ -269,4 +269,17 @@ test("panel.js heals interrupted Mermaid fences on stream restarts and preserves
   assert.ok(!fences[0].content.includes("两件事都已办好"));
   assert.equal(fences[1].info.trim(), "markdown");
   assert.ok(healed.includes("```\n\n两件事都已办好：\n\n### 1. `tf-instacart` 权限 PR 已提交"));
+
+  const normalClosedWithHashComment = [
+    "```mermaid",
+    "sequenceDiagram",
+    "    A->>B: Step 1",
+    "",
+    "    # Valid Mermaid comment after blank line",
+    "    B->>A: Step 2",
+    "```",
+    "",
+    "### Trailing Markdown Heading",
+  ].join("\n");
+  assert.equal(closeInterruptedDiagramFences(normalClosedWithHashComment), normalClosedWithHashComment);
 });

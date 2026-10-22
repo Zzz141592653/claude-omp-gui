@@ -1320,23 +1320,40 @@ function closeInterruptedDiagramFences(markdown) {
     if (!fence) {
       const open = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s`~]*)(.*)$/.exec(line);
       if (open && !(open[1][0] === "`" && (open[2] + open[3]).includes("`"))) {
+        const char = open[1][0];
+        const len = open[1].length;
+        const lang = (open[2] || "").toLowerCase();
+        const closeRe = new RegExp(`^ {0,3}${char}{${len},}[ \\t]*$`);
+        let unclosed = false;
+        if (lang === "mermaid" || lang === "svg") {
+          unclosed = true;
+          for (let j = i + 1; j < lines.length; j += 1) {
+            if (closeRe.test(lines[j])) {
+              unclosed = false;
+              break;
+            }
+            if (/^ {0,3}(`{3,}|~{3,})[ \t]*[A-Za-z0-9_-]+/.test(lines[j])) {
+              unclosed = true;
+              break;
+            }
+          }
+        }
         fence = {
           marker: open[1],
-          char: open[1][0],
-          len: open[1].length,
-          lang: (open[2] || "").toLowerCase(),
+          closeRe,
+          lang,
+          unclosed,
         };
       }
       out.push(line);
       continue;
     }
-    const closeRe = new RegExp(`^ {0,3}${fence.char}{${fence.len},}[ \\t]*$`);
-    if (closeRe.test(line)) {
+    if (fence.closeRe.test(line)) {
       fence = null;
       out.push(line);
       continue;
     }
-    if (fence.lang === "mermaid" || fence.lang === "svg") {
+    if (fence.unclosed && (fence.lang === "mermaid" || fence.lang === "svg")) {
       const prevBlank = out.length > 0 && out[out.length - 1].trim() === "";
       const nextFenceOpen = /^ {0,3}(`{3,}|~{3,})[ \t]*[A-Za-z0-9_-]+/.test(line);
       const markdownHeading = prevBlank && /^ {0,3}#{1,6}[ \t]+\S/.test(line);
