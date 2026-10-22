@@ -485,7 +485,14 @@ mark.hit.current { background: var(--vscode-editor-findMatchBackground, #f59e0b)
 .md li > p:last-child { margin-bottom: 0; }
 .md .katex { font-size: 1.04em; }
 .md .katex-block, .md .katex-display { margin: 0.55em 0; overflow-x: auto; overflow-y: hidden; }
-.md pre.mermaid-error { outline: 1px solid var(--vscode-editorWarning-foreground, #f59e0b); }
+body > div[id^="dchat_mmd_"],
+body > div[id^="ichat_mmd_"] {
+  position: fixed !important;
+  left: -10000px !important;
+  top: -10000px !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+}
 .md .mermaid { position: relative; margin: 10px 0 18px; }
 .md .mermaid svg { width: 100%; max-width: none; height: auto; display: block; }
 .md .table-chart { margin: -2px 0 16px; }

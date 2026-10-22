@@ -1,3 +1,9 @@
+# 1.5.10
+
+Since 1.5.9.
+
+- Fix Mermaid 10.9.3 `mermaid.render` leaking `<div id="d...">` error-bomb SVGs (`Syntax error in text`) into `document.body` when a `mermaid` code block contains incomplete/illustrative syntax (such as `...` in chat explanations), which created extra CSS Grid rows at the bottom of the Session Library window. Incomplete `mermaid` snippets now remain clean code blocks and all temporary `#d<id>` / `#i<id>` scratch containers are pinned offscreen and removed immediately.
+
 # 1.5.9
 
 Since 1.5.8.

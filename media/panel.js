@@ -1845,6 +1845,13 @@ function normalizeMermaidThemeColors(source, isDark) {
   );
 }
 
+function cleanupMermaidScratch(id) {
+  for (const prefix of ["d", "i", ""]) {
+    const stray = document.getElementById(`${prefix}${id}`);
+    if (stray && !stray.closest(".mermaid")) stray.remove();
+  }
+}
+
 function renderDiagrams(root) {
   if (!root) return;
   renderSvgBlocks(root);
@@ -1860,6 +1867,7 @@ function renderDiagrams(root) {
     window.mermaid.initialize({
       startOnLoad: false,
       securityLevel: "antiscript",
+      suppressErrorRendering: true,
       htmlLabels: true,
       fontFamily: getComputedStyle(document.body).fontFamily || "sans-serif",
       theme: isDark ? "dark" : "default",
@@ -1874,7 +1882,9 @@ function renderDiagrams(root) {
     const source = normalizeMermaidThemeColors(code.textContent || "", isDark);
     const id = `chat_mmd_${++diagramSeq}`;
     window.mermaid.render(id, source).then((result) => {
+      cleanupMermaidScratch(id);
       if (!pre.isConnected) return;
+      if (!result || !result.svg || result.svg.includes("Syntax error in text")) return;
       const host = el("div", "mermaid");
       host.innerHTML = result.svg;
       const svg = host.querySelector("svg");
@@ -1896,8 +1906,7 @@ function renderDiagrams(root) {
       host.append(zoom);
       pre.replaceWith(host);
     }).catch(() => {
-      if (!pre.isConnected) return;
-      pre.classList.add("mermaid-error");
+      cleanupMermaidScratch(id);
     });
   });
 }

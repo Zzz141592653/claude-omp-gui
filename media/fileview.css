@@ -330,7 +330,14 @@ pre code,
 #doc tbody tr:nth-child(even) td {
   background: color-mix(in srgb, var(--vscode-foreground) 2%, transparent);
 }
-#doc pre.mermaid-error { outline: 1px solid var(--vscode-editorWarning-foreground); }
+body > div[id^="dmmd"],
+body > div[id^="immd"] {
+  position: fixed !important;
+  left: -10000px !important;
+  top: -10000px !important;
+  pointer-events: none !important;
+  opacity: 0 !important;
+}
 #doc .katex { font-size: 1.04em; }
 #doc .katex-block, #doc .katex-display { margin: 0.55em 0; overflow-x: auto; overflow-y: hidden; }
 #doc .mermaid { position: relative; margin: 10px 0 18px; }

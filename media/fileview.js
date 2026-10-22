@@ -753,6 +753,13 @@ function normalizeMermaidThemeColors(source, isDark) {
   );
 }
 
+function cleanupMermaidScratch(id) {
+  for (const prefix of ["d", "i", ""]) {
+    const stray = document.getElementById(`${prefix}${id}`);
+    if (stray && !stray.closest(".mermaid")) stray.remove();
+  }
+}
+
 function renderDiagrams(root) {
   renderSvgBlocks(root);
   const token = ++diagramToken;
@@ -767,6 +774,7 @@ function renderDiagrams(root) {
     window.mermaid.initialize({
       startOnLoad: false,
       securityLevel: "antiscript",
+      suppressErrorRendering: true,
       htmlLabels: true,
       fontFamily: getComputedStyle(document.body).fontFamily || "sans-serif",
       theme: isDark ? "dark" : "default",
@@ -777,8 +785,11 @@ function renderDiagrams(root) {
   blocks.forEach((code, index) => {
     const pre = code.parentElement;
     const source = normalizeMermaidThemeColors(code.textContent || "", isDark);
-    window.mermaid.render(`mmd${token}x${index}`, source).then((result) => {
+    const id = `mmd${token}x${index}`;
+    window.mermaid.render(id, source).then((result) => {
+      cleanupMermaidScratch(id);
       if (token !== diagramToken || !pre.isConnected) return;
+      if (!result || !result.svg || result.svg.includes("Syntax error in text")) return;
       const host = document.createElement("div");
       host.className = "mermaid";
       host.innerHTML = result.svg;
@@ -803,8 +814,7 @@ function renderDiagrams(root) {
       host.append(zoom);
       pre.replaceWith(host);
     }).catch(() => {
-      if (token !== diagramToken || !pre.isConnected) return;
-      pre.classList.add("mermaid-error");
+      cleanupMermaidScratch(id);
     });
   });
 }
