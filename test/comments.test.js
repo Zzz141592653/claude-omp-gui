@@ -230,3 +230,43 @@ test("buildResumeCommand and resumeSessionInTerminal resume OMP and Claude Code 
     Module._load = origLoad;
   }
 });
+
+test("panel.js heals interrupted Mermaid fences on stream restarts and preserves inline # in sequenceDiagram", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const panelSrc = fs.readFileSync(path.join(__dirname, "..", "media", "panel.js"), "utf8");
+  const fnMatch = /function closeInterruptedDiagramFences\(markdown\) \{[\s\S]*?\n\}/.exec(panelSrc);
+  assert.ok(fnMatch, "closeInterruptedDiagramFences should exist in media/panel.js");
+  const closeInterruptedDiagramFences = new Function(`return (${fnMatch[0]})`)();
+
+  const corrupted = [
+    "### 3. 配图用英文 Mermaid 时序图（供你截图贴进 Slack）",
+    "",
+    "```mermaid",
+    "sequenceDiagram",
+    "    autonumber",
+    "    participant Agent as Business App / Agent<br/>(caper-credential-client)",
+    "    participant Hestia as Hestia<br/>(uid 1000)",
+    "    Hestia->>Agent: Generate RSA-2048 & sign PKCS#10 CSR in-place",
+    "    Backend->>AWS:两件事都已办好：",
+    "",
+    "### 1. `tf-instacart` 权限 PR 已提交",
+    "- **PR 链接**：https://github.com/instacart/tf-instacart/pull/72194",
+    "",
+    "```markdown",
+    "Hi @Peter Wesley",
+    "```",
+  ].join("\n");
+
+  const healed = closeInterruptedDiagramFences(corrupted);
+  const MarkdownIt = require("markdown-it");
+  const md = new MarkdownIt({ html: false, linkify: false, breaks: true });
+  const tokens = md.parse(healed, {});
+  const fences = tokens.filter((t) => t.type === "fence");
+  assert.equal(fences.length, 2);
+  assert.equal(fences[0].info.trim(), "mermaid");
+  assert.ok(!fences[0].content.includes("tf-instacart"));
+  assert.ok(!fences[0].content.includes("两件事都已办好"));
+  assert.equal(fences[1].info.trim(), "markdown");
+  assert.ok(healed.includes("```\n\n两件事都已办好：\n\n### 1. `tf-instacart` 权限 PR 已提交"));
+});

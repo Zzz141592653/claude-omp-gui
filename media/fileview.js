@@ -760,6 +760,47 @@ function cleanupMermaidScratch(id) {
   }
 }
 
+async function renderMermaidSvg(idPrefix, rawSource) {
+  const isSeq = /^\s*sequenceDiagram\b/m.test(rawSource);
+  const source = isSeq
+    ? String(rawSource || "").replace(/^(\s*[^#\s%][^\n]*)$/gm, (line) => line.replace(/#/g, "\uFE5F"))
+    : String(rawSource || "");
+  const tryOnce = async (candidate, suffix) => {
+    const id = `${idPrefix}_${suffix}`;
+    try {
+      const result = await window.mermaid.render(id, candidate);
+      cleanupMermaidScratch(id);
+      if (result && result.svg && !result.svg.includes("Syntax error in text")) {
+        return { ok: true, svg: isSeq ? result.svg.replace(/\uFE5F/g, "#") : result.svg };
+      }
+      return { ok: false, error: "Syntax error" };
+    } catch (err) {
+      cleanupMermaidScratch(id);
+      return { ok: false, error: String(err?.message || err || "") };
+    }
+  };
+  const first = await tryOnce(source, 0);
+  if (first.ok) return first.svg;
+  if (/^\s*(?:\.{3,}|…)\s*$/m.test(source)) return "";
+  const lines = String(source || "").split("\n");
+  if (lines.length < 3) return "";
+  const minCut = Math.max(2, lines.length - 4);
+  const match = /Parse error on line (\d+)/i.exec(first.error);
+  let cut = match ? Math.min(lines.length - 1, Number(match[1]) - 1) : lines.length - 1;
+  let attempts = 0;
+  while (cut >= minCut && attempts < 4) {
+    while (cut >= minCut && !lines[cut - 1].trim()) cut -= 1;
+    if (cut < minCut) break;
+    attempts += 1;
+    const retry = await tryOnce(lines.slice(0, cut).join("\n"), attempts);
+    if (retry.ok) return retry.svg;
+    const nextMatch = /Parse error on line (\d+)/i.exec(retry.error);
+    const nextCut = nextMatch ? Number(nextMatch[1]) - 1 : cut - 1;
+    cut = nextCut < cut ? nextCut : cut - 1;
+  }
+  return "";
+}
+
 function renderDiagrams(root) {
   renderSvgBlocks(root);
   const token = ++diagramToken;
@@ -786,13 +827,11 @@ function renderDiagrams(root) {
     const pre = code.parentElement;
     const source = normalizeMermaidThemeColors(code.textContent || "", isDark);
     const id = `mmd${token}x${index}`;
-    window.mermaid.render(id, source).then((result) => {
-      cleanupMermaidScratch(id);
-      if (token !== diagramToken || !pre.isConnected) return;
-      if (!result || !result.svg || result.svg.includes("Syntax error in text")) return;
+    renderMermaidSvg(id, source).then((svgMarkup) => {
+      if (token !== diagramToken || !pre.isConnected || !svgMarkup) return;
       const host = document.createElement("div");
       host.className = "mermaid";
-      host.innerHTML = result.svg;
+      host.innerHTML = svgMarkup;
       const svg = host.querySelector("svg");
       if (svg) {
         svg.removeAttribute("height");
@@ -813,8 +852,6 @@ function renderDiagrams(root) {
       host.addEventListener("mouseleave", () => zoom.classList.remove("is-visible"));
       host.append(zoom);
       pre.replaceWith(host);
-    }).catch(() => {
-      cleanupMermaidScratch(id);
     });
   });
 }

@@ -1,3 +1,10 @@
+# 1.5.11
+
+Since 1.5.10.
+
+- Heal unclosed `mermaid` / `svg` code fences when an LLM stream restarts mid-diagram (e.g., `Backend->>AWS:两件事都已办好：\n\n### 1. ...` followed by another fenced block), closing the interrupted diagram fence before the restarted Markdown section and trimming the incomplete trailing diagram line so both the Mermaid diagram and the following Markdown render properly.
+- Preserve inline `#` characters (such as `PKCS#10` or `#channel`) inside Mermaid `sequenceDiagram` labels and messages instead of letting Mermaid's lexer strip `#...` to end-of-line as a comment.
+
 # 1.5.10
 
 Since 1.5.9.

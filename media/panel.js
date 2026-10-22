@@ -1311,6 +1311,60 @@ function enhanceMarkdownDom(root) {
   }
 }
 
+function closeInterruptedDiagramFences(markdown) {
+  const lines = String(markdown || "").split("\n");
+  const out = [];
+  let fence = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!fence) {
+      const open = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s`~]*)(.*)$/.exec(line);
+      if (open && !(open[1][0] === "`" && (open[2] + open[3]).includes("`"))) {
+        fence = {
+          marker: open[1],
+          char: open[1][0],
+          len: open[1].length,
+          lang: (open[2] || "").toLowerCase(),
+        };
+      }
+      out.push(line);
+      continue;
+    }
+    const closeRe = new RegExp(`^ {0,3}${fence.char}{${fence.len},}[ \\t]*$`);
+    if (closeRe.test(line)) {
+      fence = null;
+      out.push(line);
+      continue;
+    }
+    if (fence.lang === "mermaid" || fence.lang === "svg") {
+      const prevBlank = out.length > 0 && out[out.length - 1].trim() === "";
+      const nextFenceOpen = /^ {0,3}(`{3,}|~{3,})[ \t]*[A-Za-z0-9_-]+/.test(line);
+      const markdownHeading = prevBlank && /^ {0,3}#{1,6}[ \t]+\S/.test(line);
+      if (nextFenceOpen || markdownHeading) {
+        let trailingProse = "";
+        let lastIdx = out.length - 1;
+        while (lastIdx >= 0 && out[lastIdx].trim() === "") lastIdx -= 1;
+        if (fence.lang === "mermaid" && lastIdx >= 0) {
+          const glued = /^(\s*[A-Za-z0-9_]+(?:\s*(?:-->>|->>|-->|->|-[x)]|--[x)])\s*[A-Za-z0-9_]+)\s*:)([^\s].*[：:])$/.exec(out[lastIdx]);
+          if (glued && /[^\x00-\x7F]/.test(glued[2])) {
+            out[lastIdx] = glued[1];
+            trailingProse = glued[2];
+          }
+        }
+        const blankTail = out.splice(lastIdx + 1);
+        out.push(fence.marker);
+        if (trailingProse) out.push("", trailingProse);
+        out.push(...blankTail);
+        fence = null;
+        i -= 1;
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 function renderMarkdown(parent, text) {
   const md = getMarkdownEngine();
   if (!md) {
@@ -1318,7 +1372,7 @@ function renderMarkdown(parent, text) {
     return;
   }
   const holder = document.createElement("div");
-  holder.innerHTML = unescapeInlineBr(md.render(String(text || "")));
+  holder.innerHTML = unescapeInlineBr(md.render(closeInterruptedDiagramFences(text)));
   enhanceMarkdownDom(holder);
   while (holder.firstChild) parent.append(holder.firstChild);
 }
@@ -1852,6 +1906,47 @@ function cleanupMermaidScratch(id) {
   }
 }
 
+async function renderMermaidSvg(idPrefix, rawSource) {
+  const isSeq = /^\s*sequenceDiagram\b/m.test(rawSource);
+  const source = isSeq
+    ? String(rawSource || "").replace(/^(\s*[^#\s%][^\n]*)$/gm, (line) => line.replace(/#/g, "\uFE5F"))
+    : String(rawSource || "");
+  const tryOnce = async (candidate, suffix) => {
+    const id = `${idPrefix}_${suffix}`;
+    try {
+      const result = await window.mermaid.render(id, candidate);
+      cleanupMermaidScratch(id);
+      if (result && result.svg && !result.svg.includes("Syntax error in text")) {
+        return { ok: true, svg: isSeq ? result.svg.replace(/\uFE5F/g, "#") : result.svg };
+      }
+      return { ok: false, error: "Syntax error" };
+    } catch (err) {
+      cleanupMermaidScratch(id);
+      return { ok: false, error: String(err?.message || err || "") };
+    }
+  };
+  const first = await tryOnce(source, 0);
+  if (first.ok) return first.svg;
+  if (/^\s*(?:\.{3,}|…)\s*$/m.test(source)) return "";
+  const lines = String(source || "").split("\n");
+  if (lines.length < 3) return "";
+  const minCut = Math.max(2, lines.length - 4);
+  const match = /Parse error on line (\d+)/i.exec(first.error);
+  let cut = match ? Math.min(lines.length - 1, Number(match[1]) - 1) : lines.length - 1;
+  let attempts = 0;
+  while (cut >= minCut && attempts < 4) {
+    while (cut >= minCut && !lines[cut - 1].trim()) cut -= 1;
+    if (cut < minCut) break;
+    attempts += 1;
+    const retry = await tryOnce(lines.slice(0, cut).join("\n"), attempts);
+    if (retry.ok) return retry.svg;
+    const nextMatch = /Parse error on line (\d+)/i.exec(retry.error);
+    const nextCut = nextMatch ? Number(nextMatch[1]) - 1 : cut - 1;
+    cut = nextCut < cut ? nextCut : cut - 1;
+  }
+  return "";
+}
+
 function renderDiagrams(root) {
   if (!root) return;
   renderSvgBlocks(root);
@@ -1881,12 +1976,10 @@ function renderDiagrams(root) {
     pre.dataset.mermaidRendered = "1";
     const source = normalizeMermaidThemeColors(code.textContent || "", isDark);
     const id = `chat_mmd_${++diagramSeq}`;
-    window.mermaid.render(id, source).then((result) => {
-      cleanupMermaidScratch(id);
-      if (!pre.isConnected) return;
-      if (!result || !result.svg || result.svg.includes("Syntax error in text")) return;
+    renderMermaidSvg(id, source).then((svgMarkup) => {
+      if (!pre.isConnected || !svgMarkup) return;
       const host = el("div", "mermaid");
-      host.innerHTML = result.svg;
+      host.innerHTML = svgMarkup;
       const svg = host.querySelector("svg");
       if (svg) {
         svg.removeAttribute("height");
@@ -1905,8 +1998,6 @@ function renderDiagrams(root) {
       host.addEventListener("mouseleave", () => zoom.classList.remove("is-visible"));
       host.append(zoom);
       pre.replaceWith(host);
-    }).catch(() => {
-      cleanupMermaidScratch(id);
     });
   });
 }
