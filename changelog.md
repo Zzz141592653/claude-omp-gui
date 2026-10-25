@@ -1,3 +1,10 @@
+# 1.5.12
+
+Since 1.5.11.
+
+- Render Mermaid `sequenceDiagram` blocks whose message, note, participant alias, title or block-label text contains `;`. Every official Mermaid version (10.9.3, 11.12.0, 12.2.0) treats `;` as a statement terminator, so one semicolon inside a label made the whole diagram fail (`Parse error on line N ... got 'NEWLINE'`). Sequence text now escapes it as the `#59;` entity (block labels use a comma, because the entity breaks their label rendering), trailing statement terminators and `%%` comments are left alone.
+- Show a `mermaid: parse error at line N — showing source` banner above a Mermaid block that cannot be rendered, and `mermaid: incomplete diagram — showing source` for illustrative `...`/`…` placeholders, instead of silently leaving the raw source with no explanation. The banner's tooltip carries Mermaid's full error text.
+
 # 1.5.11
 
 Since 1.5.10.

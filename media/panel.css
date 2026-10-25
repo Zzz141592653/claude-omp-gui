@@ -495,6 +495,15 @@ body > div[id^="ichat_mmd_"] {
 }
 .md .mermaid { position: relative; margin: 10px 0 18px; }
 .md .mermaid svg { width: 100%; max-width: none; height: auto; display: block; }
+.md .mermaid-error {
+  margin: 10px 0 6px;
+  padding: 4px 9px;
+  border-left: 3px solid var(--error);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  color: var(--error);
+  font-size: 11px;
+}
 .md .table-chart { margin: -2px 0 16px; }
 .mermaid-zoom {
   position: absolute;

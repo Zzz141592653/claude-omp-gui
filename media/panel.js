@@ -1923,10 +1923,27 @@ function cleanupMermaidScratch(id) {
   }
 }
 
+function escapeMermaidSequenceSemicolons(source) {
+  return String(source || "")
+    .split("\n")
+    .map((line) => {
+      if (/^\s*%%/.test(line)) return line;
+      // Block labels cannot carry the entity form, so a comma keeps them readable.
+      if (/^\s*(?:alt|else|opt|loop|par|and|critical|option|break|box)\b/.test(line)) {
+        return line.replace(/;(?=[ \t]*\S)/g, ",");
+      }
+      const escaped = line.replace(/;(?=[ \t]*\S)/g, "#59;");
+      return escaped === line ? line : escaped;
+    })
+    .join("\n");
+}
+
 async function renderMermaidSvg(idPrefix, rawSource) {
   const isSeq = /^\s*sequenceDiagram\b/m.test(rawSource);
   const source = isSeq
-    ? String(rawSource || "").replace(/^(\s*[^#\s%][^\n]*)$/gm, (line) => line.replace(/#/g, "\uFE5F"))
+    ? escapeMermaidSequenceSemicolons(
+        String(rawSource || "").replace(/^(\s*[^#\s%][^\n]*)$/gm, (line) => line.replace(/#/g, "\uFE5F"))
+      )
     : String(rawSource || "");
   const tryOnce = async (candidate, suffix) => {
     const id = `${idPrefix}_${suffix}`;
@@ -1943,10 +1960,11 @@ async function renderMermaidSvg(idPrefix, rawSource) {
     }
   };
   const first = await tryOnce(source, 0);
-  if (first.ok) return first.svg;
-  if (/^\s*(?:\.{3,}|…)\s*$/m.test(source)) return "";
+  if (first.ok) return { svg: first.svg, error: "", incomplete: false };
+  const failed = { svg: "", error: first.error || "Syntax error", incomplete: false };
+  if (/^\s*(?:\.{3,}|…)\s*$/m.test(source)) return { ...failed, error: "incomplete diagram", incomplete: true };
   const lines = String(source || "").split("\n");
-  if (lines.length < 3) return "";
+  if (lines.length < 3) return failed;
   const minCut = Math.max(2, lines.length - 4);
   const match = /Parse error on line (\d+)/i.exec(first.error);
   let cut = match ? Math.min(lines.length - 1, Number(match[1]) - 1) : lines.length - 1;
@@ -1956,12 +1974,19 @@ async function renderMermaidSvg(idPrefix, rawSource) {
     if (cut < minCut) break;
     attempts += 1;
     const retry = await tryOnce(lines.slice(0, cut).join("\n"), attempts);
-    if (retry.ok) return retry.svg;
+    if (retry.ok) return { svg: retry.svg, error: "", incomplete: false };
     const nextMatch = /Parse error on line (\d+)/i.exec(retry.error);
     const nextCut = nextMatch ? Number(nextMatch[1]) - 1 : cut - 1;
     cut = nextCut < cut ? nextCut : cut - 1;
   }
-  return "";
+  return failed;
+}
+
+function formatMermaidError(result) {
+  if (result && result.incomplete) return "mermaid: incomplete diagram — showing source";
+  const line = /parse error on line (\d+)/i.exec(String((result && result.error) || ""));
+  if (line) return `mermaid: parse error at line ${line[1]} — showing source`;
+  return "mermaid: could not render this diagram — showing source";
 }
 
 function renderDiagrams(root) {
@@ -1993,10 +2018,16 @@ function renderDiagrams(root) {
     pre.dataset.mermaidRendered = "1";
     const source = normalizeMermaidThemeColors(code.textContent || "", isDark);
     const id = `chat_mmd_${++diagramSeq}`;
-    renderMermaidSvg(id, source).then((svgMarkup) => {
-      if (!pre.isConnected || !svgMarkup) return;
+    renderMermaidSvg(id, source).then((result) => {
+      if (!pre.isConnected) return;
+      if (!result.svg) {
+        const note = el("div", "mermaid-error", formatMermaidError(result));
+        note.title = String(result.error || "");
+        pre.before(note);
+        return;
+      }
       const host = el("div", "mermaid");
-      host.innerHTML = svgMarkup;
+      host.innerHTML = result.svg;
       const svg = host.querySelector("svg");
       if (svg) {
         svg.removeAttribute("height");

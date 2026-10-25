@@ -342,6 +342,15 @@ body > div[id^="immd"] {
 #doc .katex-block, #doc .katex-display { margin: 0.55em 0; overflow-x: auto; overflow-y: hidden; }
 #doc .mermaid { position: relative; margin: 10px 0 18px; }
 #doc .mermaid svg { width: 100%; max-width: none; height: auto; display: block; }
+#doc .mermaid-error {
+  margin: 10px 0 6px;
+  padding: 4px 9px;
+  border-left: 3px solid var(--error);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  color: var(--error);
+  font-size: 11px;
+}
 .mermaid-zoom {
   position: absolute;
   top: 8px;
