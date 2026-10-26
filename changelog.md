@@ -1,3 +1,9 @@
+# 1.5.13
+
+Since 1.5.12.
+
+- Preserve the natural `viewBox` width (`max-width: <naturalWidth>px`) on Mermaid and inline SVG diagrams in both the Session Library (`media/panel.js`, `media/panel.css`) and File Review (`media/fileview.js`, `media/fileview.css`) instead of forcing `max-width: none`, preventing narrow vertical flowcharts from being stretched to the full container width with oversized text while keeping wide horizontal diagrams and full-screen zoom unchanged.
+
 # 1.5.12
 
 Since 1.5.11.

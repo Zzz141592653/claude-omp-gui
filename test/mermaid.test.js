@@ -22,6 +22,14 @@ function loadFormatError(host) {
   return new Function(`return (${match[0]})`)();
 }
 
+function loadDiagramSizer(host) {
+  const src = fs.readFileSync(path.join(__dirname, "..", host), "utf8");
+  const start = src.indexOf("function parseDiagramNaturalWidth(svg)");
+  const end = src.indexOf("function attachZoomButton(host, getSvg)");
+  assert.ok(start >= 0 && end > start, `${host} should define parseDiagramNaturalWidth and sizeDiagramSvg`);
+  return new Function(`${src.slice(start, end)}\nreturn { parseDiagramNaturalWidth, sizeDiagramSvg };`)();
+}
+
 for (const host of HOSTS) {
   const escapeSeq = loadEscape(host);
 
@@ -88,5 +96,44 @@ for (const host of HOSTS) {
   test(`${host}: errors without a line number fall back to a generic banner`, () => {
     assert.equal(formatError({ svg: "", error: "Syntax error" }), "mermaid: could not render this diagram — showing source");
     assert.equal(formatError(undefined), "mermaid: could not render this diagram — showing source");
+  });
+
+  const { sizeDiagramSvg } = loadDiagramSizer(host);
+
+  function makeStubSvg(attrs = {}) {
+    const bag = new Map(Object.entries(attrs));
+    const style = {
+      width: "",
+      height: "",
+      maxWidth: "",
+      minWidth: "",
+      removeProperty(prop) {
+        if (prop === "min-width") this.minWidth = "";
+      },
+    };
+    return {
+      style,
+      getAttribute(name) {
+        return bag.has(name) ? bag.get(name) : null;
+      },
+      removeAttribute(name) {
+        bag.delete(name);
+      },
+    };
+  }
+
+  test(`${host}: diagrams cap maxWidth at their natural viewBox width so narrow diagrams do not stretch`, () => {
+    const svg = makeStubSvg({ viewBox: "0 0 446 910", height: "910" });
+    sizeDiagramSvg(svg);
+    assert.equal(svg.getAttribute("height"), null);
+    assert.equal(svg.style.width, "100%");
+    assert.equal(svg.style.height, "auto");
+    assert.equal(svg.style.maxWidth, "446px");
+  });
+
+  test(`${host}: diagrams without viewBox or width fall back to 100% maxWidth`, () => {
+    const svg = makeStubSvg({});
+    sizeDiagramSvg(svg);
+    assert.equal(svg.style.maxWidth, "100%");
   });
 }

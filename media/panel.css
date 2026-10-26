@@ -494,7 +494,7 @@ body > div[id^="ichat_mmd_"] {
   opacity: 0 !important;
 }
 .md .mermaid { position: relative; margin: 10px 0 18px; }
-.md .mermaid svg { width: 100%; max-width: none; height: auto; display: block; }
+.md .mermaid svg { max-width: 100%; height: auto; display: block; }
 .md .mermaid-error {
   margin: 10px 0 6px;
   padding: 4px 9px;

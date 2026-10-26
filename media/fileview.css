@@ -341,7 +341,7 @@ body > div[id^="immd"] {
 #doc .katex { font-size: 1.04em; }
 #doc .katex-block, #doc .katex-display { margin: 0.55em 0; overflow-x: auto; overflow-y: hidden; }
 #doc .mermaid { position: relative; margin: 10px 0 18px; }
-#doc .mermaid svg { width: 100%; max-width: none; height: auto; display: block; }
+#doc .mermaid svg { max-width: 100%; height: auto; display: block; }
 #doc .mermaid-error {
   margin: 10px 0 6px;
   padding: 4px 9px;

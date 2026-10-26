@@ -1858,6 +1858,29 @@ function animateSpendValue(source, element, targetValue) {
 
 let diagramSeq = 0;
 
+function parseDiagramNaturalWidth(svg) {
+  if (!svg) return 0;
+  const vb = String(svg.getAttribute("viewBox") || "")
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number);
+  if (vb.length === 4 && Number.isFinite(vb[2]) && vb[2] > 0) return vb[2];
+  const styleMax = /max-width:\s*([0-9.]+)px/i.exec(String(svg.getAttribute("style") || ""));
+  if (styleMax && Number(styleMax[1]) > 0) return Number(styleMax[1]);
+  const widthAttr = /^\s*([0-9.]+)(?:px)?\s*$/i.exec(String(svg.getAttribute("width") || ""));
+  if (widthAttr && Number(widthAttr[1]) > 0) return Number(widthAttr[1]);
+  return 0;
+}
+
+function sizeDiagramSvg(svg) {
+  if (!svg) return;
+  const naturalWidth = parseDiagramNaturalWidth(svg);
+  svg.removeAttribute("height");
+  svg.style.width = "100%";
+  svg.style.height = "auto";
+  svg.style.maxWidth = naturalWidth > 0 ? `${Math.ceil(naturalWidth)}px` : "100%";
+}
+
 function attachZoomButton(host, getSvg) {
   const zoom = el("button", "mermaid-zoom", "Full screen");
   zoom.type = "button";
@@ -1884,10 +1907,7 @@ function renderSvgBlocks(root) {
     host.innerHTML = safe;
     const svg = host.querySelector("svg");
     if (!svg) continue;
-    svg.removeAttribute("height");
-    svg.style.width = "100%";
-    svg.style.height = "auto";
-    svg.style.maxWidth = "none";
+    sizeDiagramSvg(svg);
     attachZoomButton(host, svg);
     pre.replaceWith(host);
   }
@@ -2029,22 +2049,8 @@ function renderDiagrams(root) {
       const host = el("div", "mermaid");
       host.innerHTML = result.svg;
       const svg = host.querySelector("svg");
-      if (svg) {
-        svg.removeAttribute("height");
-        svg.style.width = "100%";
-        svg.style.height = "auto";
-        svg.style.maxWidth = "none";
-      }
-      const zoom = el("button", "mermaid-zoom", "Full screen");
-      zoom.type = "button";
-      zoom.addEventListener("click", () => openDiagram(svg));
-      const showZoom = (event) => {
-        const top = event.clientY - host.getBoundingClientRect().top;
-        zoom.classList.toggle("is-visible", top <= 44 || zoom.contains(event.target));
-      };
-      host.addEventListener("mousemove", showZoom);
-      host.addEventListener("mouseleave", () => zoom.classList.remove("is-visible"));
-      host.append(zoom);
+      if (svg) sizeDiagramSvg(svg);
+      attachZoomButton(host, svg);
       pre.replaceWith(host);
     });
   });
