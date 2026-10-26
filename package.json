@@ -2,7 +2,7 @@
   "name": "agent-sessions",
   "displayName": "Claude Code & OMP GUI — Sessions, Usage & Review",
   "description": "GUI for Claude Code and OMP (Oh My Pi): live session browser, per-model token speed (tok/s) & Today/Month spend tracker with mascot toasts, Mermaid/SVG/table chart viewer, and inline file review comments.",
-  "version": "1.5.13",
+  "version": "1.5.14",
   "publisher": "jinxinyang",
   "license": "MIT",
   "icon": "media/icon.png",

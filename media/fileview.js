@@ -794,6 +794,135 @@ function escapeMermaidSequenceSemicolons(source) {
     })
     .join("\n");
 }
+function quoteMermaidText(text) {
+  const trimmed = String(text || "").trim();
+  if (/^"[\s\S]*"$/.test(trimmed)) return trimmed;
+  return `"${trimmed.replace(/"/g, "#quot;")}"`;
+}
+
+function normalizeFlowchartNodeShapes(line) {
+  const openers = [
+    ["(((", ")))"],
+    ["((", "))"],
+    ["([", "])"],
+    ["[(", ")]"],
+    ["[[", "]]"],
+    ["{{", "}}"],
+    ["[/", "/]"],
+    ["[\\", "\\]"],
+    ["[/", "\\]"],
+    ["[\\", "/]"],
+    ["[", "]"],
+    ["(", ")"],
+    ["{", "}"],
+  ];
+  let out = "";
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] === "|") {
+      const endPipe = line.indexOf("|", i + 1);
+      if (endPipe !== -1) {
+        out += line.slice(i, endPipe + 1);
+        i = endPipe + 1;
+        continue;
+      }
+    }
+    const rest = line.slice(i);
+    const idMatch = /^([A-Za-z0-9_\u4e00-\u9fff-]+)(?=[([{])/.exec(rest);
+    if (!idMatch) {
+      out += line[i];
+      i += 1;
+      continue;
+    }
+    const nodeId = idMatch[1];
+    const before = line.slice(0, i).trimEnd();
+    if (before && !/(?:[;&|>]|[-=.][ox]?)$/.test(before)) {
+      out += nodeId;
+      i += nodeId.length;
+      continue;
+    }
+    const shapeStart = i + nodeId.length;
+    const afterId = line.slice(shapeStart);
+    let matchedOpener = null;
+    let contentStart = -1;
+    let contentEnd = -1;
+    for (const pair of openers) {
+      const [openTok, closeTok] = pair;
+      if (!afterId.startsWith(openTok)) continue;
+      const start = shapeStart + openTok.length;
+      let end = -1;
+      if (openTok.length === 1) {
+        let depth = 1;
+        for (let j = start; j < line.length; j += 1) {
+          if (line[j] === openTok) depth += 1;
+          else if (line[j] === closeTok) {
+            depth -= 1;
+            if (depth === 0) {
+              end = j;
+              break;
+            }
+          }
+        }
+      } else {
+        end = line.indexOf(closeTok, start);
+      }
+      if (end !== -1) {
+        matchedOpener = pair;
+        contentStart = start;
+        contentEnd = end;
+        break;
+      }
+    }
+    if (!matchedOpener) {
+      out += nodeId;
+      i += nodeId.length;
+      continue;
+    }
+    const [openTok, closeTok] = matchedOpener;
+    const inner = line.slice(contentStart, contentEnd);
+    const trimmedInner = inner.trim();
+    const needsQuote =
+      trimmedInner.length > 0 &&
+      !/^"[\s\S]*"$/.test(trimmedInner) &&
+      /[()[\]{}"“”;/（）：！~]/.test(trimmedInner);
+    const safeInner = needsQuote ? quoteMermaidText(inner) : inner;
+    out += `${nodeId}${openTok}${safeInner}${closeTok}`;
+    i = contentEnd + closeTok.length;
+  }
+  return out;
+}
+
+function normalizeMermaidFlowchart(source) {
+  if (!/^\s*(?:graph|flowchart)\b/m.test(source)) return String(source || "");
+  let sgSeq = 0;
+  return String(source || "")
+    .split("\n")
+    .map((line) => {
+      if (/^\s*%%/.test(line)) return line;
+      const sgMatch = /^(\s*subgraph\s+)(.+?)\s*$/.exec(line);
+      if (sgMatch) {
+        const prefix = sgMatch[1];
+        const rest = sgMatch[2].trim();
+        if (/^"[\s\S]*"$/.test(rest)) return line;
+        const indexed = /^([A-Za-z0-9_\u4e00-\u9fff-]+)\s*\[([\s\S]*)\]$/.exec(rest);
+        if (indexed) {
+          return `${prefix}${indexed[1]}[${quoteMermaidText(indexed[2])}]`;
+        }
+        if (/^[A-Za-z0-9_\u4e00-\u9fff-]+$/.test(rest)) return line;
+        return `${prefix}__sg_${++sgSeq}[${quoteMermaidText(rest)}]`;
+      }
+      const out = line.replace(/([-=.]+>?\|)([^|\n]+)\|/g, (m, arrowPipe, label) => {
+        const trimmed = label.trim();
+        if (/^"[\s\S]*"$/.test(trimmed)) return m;
+        if (/[()[\]{}"“”;/]/.test(trimmed)) {
+          return `${arrowPipe}${quoteMermaidText(trimmed)}|`;
+        }
+        return m;
+      });
+      return normalizeFlowchartNodeShapes(out);
+    })
+    .join("\n");
+}
 
 async function renderMermaidSvg(idPrefix, rawSource) {
   const isSeq = /^\s*sequenceDiagram\b/m.test(rawSource);
@@ -801,7 +930,7 @@ async function renderMermaidSvg(idPrefix, rawSource) {
     ? escapeMermaidSequenceSemicolons(
         String(rawSource || "").replace(/^(\s*[^#\s%][^\n]*)$/gm, (line) => line.replace(/#/g, "\uFE5F"))
       )
-    : String(rawSource || "");
+    : normalizeMermaidFlowchart(rawSource);
   const tryOnce = async (candidate, suffix) => {
     const id = `${idPrefix}_${suffix}`;
     try {
@@ -823,7 +952,7 @@ async function renderMermaidSvg(idPrefix, rawSource) {
   const lines = String(source || "").split("\n");
   if (lines.length < 3) return failed;
   const minCut = Math.max(2, lines.length - 4);
-  const match = /Parse error on line (\d+)/i.exec(first.error);
+  const match = /(?:Parse|Lexical) error on line (\d+)/i.exec(first.error);
   let cut = match ? Math.min(lines.length - 1, Number(match[1]) - 1) : lines.length - 1;
   let attempts = 0;
   while (cut >= minCut && attempts < 4) {
@@ -832,7 +961,7 @@ async function renderMermaidSvg(idPrefix, rawSource) {
     attempts += 1;
     const retry = await tryOnce(lines.slice(0, cut).join("\n"), attempts);
     if (retry.ok) return { svg: retry.svg, error: "", incomplete: false };
-    const nextMatch = /Parse error on line (\d+)/i.exec(retry.error);
+    const nextMatch = /(?:Parse|Lexical) error on line (\d+)/i.exec(retry.error);
     const nextCut = nextMatch ? Number(nextMatch[1]) - 1 : cut - 1;
     cut = nextCut < cut ? nextCut : cut - 1;
   }
@@ -841,7 +970,7 @@ async function renderMermaidSvg(idPrefix, rawSource) {
 
 function formatMermaidError(result) {
   if (result && result.incomplete) return "mermaid: incomplete diagram — showing source";
-  const line = /parse error on line (\d+)/i.exec(String((result && result.error) || ""));
+  const line = /(?:parse|lexical) error on line (\d+)/i.exec(String((result && result.error) || ""));
   if (line) return `mermaid: parse error at line ${line[1]} — showing source`;
   return "mermaid: could not render this diagram — showing source";
 }

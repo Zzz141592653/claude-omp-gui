@@ -1,3 +1,10 @@
+# 1.5.14
+
+Since 1.5.13.
+
+- Normalize unquoted Mermaid `graph` / `flowchart` `subgraph` titles, node labels (`[...]`, `(...)`, `{...}`, `[(...)]`, `([...])`, `[[...]]`, `((...))`, `{{...}}`), and pipe edge labels (`|...|`) containing parentheses, full-width CJK punctuation (`（`, `）`, `！`, `：`, `~`), slashes, or quotes so LLM-generated flowcharts render without triggering Mermaid Jison lexer errors.
+- Match `Lexical error on line N` in addition to `Parse error on line N` in `formatMermaidError` and line-trimming fallback retries.
+
 # 1.5.13
 
 Since 1.5.12.

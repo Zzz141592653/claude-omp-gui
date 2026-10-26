@@ -22,6 +22,14 @@ function loadFormatError(host) {
   return new Function(`return (${match[0]})`)();
 }
 
+function loadNormalizeFlowchart(host) {
+  const src = fs.readFileSync(path.join(__dirname, "..", host), "utf8");
+  const start = src.indexOf("function quoteMermaidText(text)");
+  const end = src.indexOf("async function renderMermaidSvg(idPrefix, rawSource)");
+  assert.ok(start >= 0 && end > start, `${host} should define normalizeMermaidFlowchart`);
+  return new Function(`${src.slice(start, end)}\nreturn normalizeMermaidFlowchart;`)();
+}
+
 function loadDiagramSizer(host) {
   const src = fs.readFileSync(path.join(__dirname, "..", host), "utf8");
   const start = src.indexOf("function parseDiagramNaturalWidth(svg)");
@@ -84,6 +92,13 @@ for (const host of HOSTS) {
       }),
       "mermaid: parse error at line 11 — showing source"
     );
+    assert.equal(
+      formatError({
+        svg: "",
+        error: "Lexical error on line 9. Unrecognized text.\n...subgraph 废土本地的五大职能分类（交叉映射！）",
+      }),
+      "mermaid: parse error at line 9 — showing source"
+    );
   });
 
   test(`${host}: an unfinished snippet is reported as incomplete, not as a syntax error`, () => {
@@ -135,5 +150,41 @@ for (const host of HOSTS) {
     const svg = makeStubSvg({});
     sizeDiagramSvg(svg);
     assert.equal(svg.style.maxWidth, "100%");
+  });
+
+  const normalizeFlowchart = loadNormalizeFlowchart(host);
+
+  test(`${host}: unquoted subgraph titles with punctuation and CJK brackets are wrapped in quoted subgraph labels`, () => {
+    const input = [
+      "graph LR",
+      "    subgraph 主角认知的底层灵根",
+      "    G1[金灵根]",
+      "    end",
+      "    subgraph 废土本地的五大职能分类（交叉映射！）",
+      "    C1[【御物科 / 念动系】<br/>隔空控物]",
+      "    end",
+      "    G1 -->|灵气离体控铁| C1",
+    ].join("\n");
+    const out = normalizeFlowchart(input);
+    assert.match(out, /subgraph 主角认知的底层灵根\n/);
+    assert.match(out, /subgraph __sg_1\["废土本地的五大职能分类（交叉映射！）"\]/);
+    assert.match(out, /C1\["【御物科 \/ 念动系】<br\/>隔空控物"\]/);
+  });
+
+  test(`${host}: unquoted flowchart node shapes and edge labels with parentheses or quotes are safely quoted`, () => {
+    const input = [
+      "flowchart TD",
+      '    A[Step 1 (init) "fast"] -->|calls foo(x)| B(Step 2 (run))',
+      "    B -- calls bar(y) --> C[(Postgres (primary))]",
+    ].join("\n");
+    const out = normalizeFlowchart(input);
+    assert.equal(
+      out,
+      [
+        "flowchart TD",
+        '    A["Step 1 (init) #quot;fast#quot;"] -->|"calls foo(x)"| B("Step 2 (run)")',
+        '    B -- calls bar(y) --> C[("Postgres (primary)")]',
+      ].join("\n")
+    );
   });
 }
